@@ -802,7 +802,7 @@ function estimatePowerHardening(pairs, modulusResult) {
 
 function estimateRambergOsgood(pairs, modulusValue, yieldStress) {
   if (!Number.isFinite(modulusValue) || modulusValue <= 0) {
-    return { error: "Ramberg-Osgood needs E." };
+    return { error: "Ramberg-Osgood needs E (elastic modulus). Enter E with correct units." };
   }
   if (!Number.isFinite(yieldStress) || yieldStress <= 0) {
     return { error: "Ramberg-Osgood needs yield stress." };
@@ -859,7 +859,7 @@ function estimateRambergOsgood(pairs, modulusValue, yieldStress) {
 
 function estimateRambergOsgoodTrue(pairs, modulusValue, yieldStress) {
   if (!Number.isFinite(modulusValue) || modulusValue <= 0) {
-    return { error: "Ramberg-Osgood needs E." };
+    return { error: "Ramberg-Osgood needs E (elastic modulus). Enter E with correct units." };
   }
   if (!Number.isFinite(yieldStress) || yieldStress <= 0) {
     return { error: "Ramberg-Osgood needs yield stress." };
