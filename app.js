@@ -1810,6 +1810,23 @@ selectPlasticRangeBtn.addEventListener("click", () => {
   const maxStress = Math.max(...parsed.pairs.map((pair) => pair.y));
   stressMinInput.value = String(yieldPointData.y);
   stressMaxInput.value = String(maxStress);
+  if (theoryYieldInput) {
+    theoryYieldInput.value = formatInputValue(yieldPointData.y, 2);
+  }
+  if (theoryUtsInput) {
+    theoryUtsInput.value = formatInputValue(maxStress, 2);
+  }
+  if (theoryUtsStrainInput) {
+    const utsStrain = findStrainAtStress(parsed.pairs, maxStress);
+    if (Number.isFinite(utsStrain)) {
+      theoryUtsStrainInput.value = formatInputValue(utsStrain, 6);
+    } else {
+      theoryUtsStrainInput.value = "";
+    }
+  }
+  if (plasticStrainStepInput) {
+    plasticStrainStepInput.value = "0.005";
+  }
   stressRangeActive = true;
   lineRangeActive = false;
   elasticLineOverride = null;
