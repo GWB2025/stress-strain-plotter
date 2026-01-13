@@ -8,3 +8,7 @@ __pycache__/
 
 # Logs
 *.log
+
+# Data & screenshots
+*.csv
+*.png
