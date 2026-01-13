@@ -79,4 +79,4 @@ The repo includes Al2024-T351.csv as a built-in reference dataset.
 
 ## License
 
-Not specified. Add a LICENSE file if you want to set usage terms.
+Licensed under the MIT License. See LICENSE.
