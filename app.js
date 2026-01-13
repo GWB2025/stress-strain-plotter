@@ -118,6 +118,7 @@ let lastPopupMessage = "";
 let hardeningWarningMode = "silent";
 let referenceLoaded = false;
 let regionFitMode = "default";
+let lastAutoFillKey = null;
 
 const referenceDataset = {
   name: "Al2024-T351",
@@ -368,7 +369,7 @@ function renderPoints(pairs, xDomain, yDomain, box) {
   });
 }
 
-function renderChart(pairs, overridePairs) {
+function renderChart(pairs, overridePairs, shouldAutoFill) {
   clearChart();
 
   const source = rawData || stripDecorations(input.value);
@@ -459,7 +460,7 @@ function renderChart(pairs, overridePairs) {
     yieldPointTop.textContent = "Yield (0.2%): --";
   }
 
-  autoFillInputs(pairs, baseModulus, yieldResult, metrics);
+  autoFillInputs(pairs, baseModulus, yieldResult, metrics, shouldAutoFill);
   elasticModulus = readElasticModulus();
   theoryInput = readTheoreticalInputs();
   plasticStrainStep = readPlasticStrainStep(false);
@@ -1584,7 +1585,12 @@ function plotFromRaw(raw) {
   }
 
   setFeedback(warning);
-  renderChart(fullPairs, elasticLineOverride || elasticRangeOverride);
+  const autoFillKey = buildAutoFillKey(fullPairs);
+  const shouldAutoFill = autoFillKey !== lastAutoFillKey;
+  if (shouldAutoFill) {
+    lastAutoFillKey = autoFillKey;
+  }
+  renderChart(fullPairs, elasticLineOverride || elasticRangeOverride, shouldAutoFill);
   const modulusValue = readElasticModulus().value;
   renderDataTable(fullPairs, modulusValue);
   renderDataPlot(fullPairs, modulusValue);
@@ -2283,45 +2289,53 @@ function findStrainAtStress(pairs, targetStress) {
   return best ? best.x : null;
 }
 
-function autoFillInputs(pairs, baseModulus, yieldResult, metrics) {
+function buildAutoFillKey(pairs) {
+  if (!pairs || pairs.length === 0) {
+    return "empty";
+  }
+  const first = pairs[0];
+  const last = pairs[pairs.length - 1];
+  return `${pairs.length}:${first.x},${first.y}:${last.x},${last.y}`;
+}
+
+function autoFillInputs(pairs, baseModulus, yieldResult, metrics, force) {
+  if (!force) {
+    return;
+  }
   const useStressRange = stressRangeActive;
   const rangeMin = Number(stressMinInput.value.trim());
   const rangeMax = Number(stressMaxInput.value.trim());
   const hasRangeMin = Number.isFinite(rangeMin);
   const hasRangeMax = Number.isFinite(rangeMax);
 
-  if (baseModulus && elasticModulusInput && elasticModulusInput.value.trim() === "") {
+  if (baseModulus && elasticModulusInput) {
     elasticModulusInput.value = formatInputValue(baseModulus.slope, 2);
   }
-  if (theoryYieldInput && theoryYieldInput.value.trim() === "") {
+  if (theoryYieldInput) {
     if (useStressRange && hasRangeMin) {
       theoryYieldInput.value = formatInputValue(rangeMin, 2);
     } else if (yieldResult) {
       theoryYieldInput.value = formatInputValue(yieldResult.y, 2);
     }
   }
-  if (theoryUtsInput && theoryUtsInput.value.trim() === "") {
+  if (theoryUtsInput) {
     if (useStressRange && hasRangeMax) {
       theoryUtsInput.value = formatInputValue(rangeMax, 2);
     } else if (metrics) {
       theoryUtsInput.value = formatInputValue(metrics.uts, 2);
     }
   }
-  if (
-    theoryUtsStrainInput &&
-    theoryUtsStrainInput.value.trim() === "" &&
-    pairs &&
-    pairs.length > 0
-  ) {
-    const utsStrain =
-      useStressRange && hasRangeMax
-        ? findStrainAtStress(pairs, rangeMax)
-        : findUtsStrain(pairs);
+  if (theoryUtsStrainInput && pairs && pairs.length > 0) {
+    const utsStrain = useStressRange && hasRangeMax
+      ? findStrainAtStress(pairs, rangeMax)
+      : findUtsStrain(pairs);
     if (Number.isFinite(utsStrain)) {
       theoryUtsStrainInput.value = formatInputValue(utsStrain, 6);
+    } else {
+      theoryUtsStrainInput.value = "";
     }
   }
-  if (plasticStrainStepInput && plasticStrainStepInput.value.trim() === "") {
+  if (plasticStrainStepInput) {
     plasticStrainStepInput.value = "0.005";
   }
 }
