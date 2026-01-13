@@ -2456,13 +2456,8 @@ function buildTheoreticalCurve(inputs) {
   }
 
   const yieldStrain = yieldStrength / modulus + 0.002;
-  const trueYieldStrain = Math.log1p(yieldStrain);
-  const trueYieldStress = yieldStrength * (1 + yieldStrain);
-  const plasticYieldStrain = trueYieldStrain - trueYieldStress / modulus;
-
-  const trueUtsStrain = Math.log1p(utsStrain);
-  const trueUtsStress = utsStrength * (1 + utsStrain);
-  const plasticUtsStrain = trueUtsStrain - trueUtsStress / modulus;
+  const plasticYieldStrain = yieldStrain - yieldStrength / modulus;
+  const plasticUtsStrain = utsStrain - utsStrength / modulus;
 
   if (!Number.isFinite(plasticYieldStrain) || !Number.isFinite(plasticUtsStrain)) {
     return { error: "Unable to compute plastic strain. Check E and inputs." };
@@ -2475,13 +2470,13 @@ function buildTheoreticalCurve(inputs) {
   }
 
   const n =
-    Math.log(trueUtsStress / trueYieldStress) /
+    Math.log(utsStrength / yieldStrength) /
     Math.log(plasticUtsStrain / plasticYieldStrain);
   if (!Number.isFinite(n) || n <= 0) {
     return { error: "Unable to solve for hardening exponent n." };
   }
 
-  const K = trueYieldStress / plasticYieldStrain ** n;
+  const K = yieldStrength / plasticYieldStrain ** n;
   if (!Number.isFinite(K) || K <= 0) {
     return { error: "Unable to solve for strength coefficient K." };
   }
@@ -2498,11 +2493,9 @@ function buildTheoreticalCurve(inputs) {
     const plasticStrain =
       plasticYieldStrain +
       ((plasticUtsStrain - plasticYieldStrain) * i) / plasticSteps;
-    const trueStress = K * plasticStrain ** n;
-    const trueStrain = plasticStrain + trueStress / modulus;
-    const engStrain = Math.expm1(trueStrain);
-    const engStress = trueStress / (1 + engStrain);
-    points.push({ x: engStrain, y: engStress });
+    const stress = K * plasticStrain ** n;
+    const strain = plasticStrain + stress / modulus;
+    points.push({ x: strain, y: stress });
   }
 
   return {
