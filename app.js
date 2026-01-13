@@ -460,7 +460,6 @@ function renderChart(pairs, overridePairs) {
       regionFitMode === "plastic",
       regionFitMode === "plastic" ? truePlasticPairs : null,
       fitModel,
-      yieldResult,
     );
   } else {
     elasticSummary.textContent = "Awaiting fit segment...";
@@ -800,70 +799,7 @@ function estimatePowerHardening(pairs, modulusResult) {
   };
 }
 
-function estimateRambergOsgood(pairs, modulusValue, yieldStress) {
-  if (!Number.isFinite(modulusValue) || modulusValue <= 0) {
-    return { error: "Ramberg-Osgood needs E." };
-  }
-  if (!Number.isFinite(yieldStress) || yieldStress <= 0) {
-    return { error: "Ramberg-Osgood needs yield stress." };
-  }
-
-  const fitPairs = pairs.filter((pair) => {
-    if (!Number.isFinite(pair.x) || !Number.isFinite(pair.y) || pair.y <= 0) {
-      return false;
-    }
-    const plasticStrain = pair.x - pair.y / modulusValue;
-    return plasticStrain > 0;
-  });
-
-  if (fitPairs.length < 3) {
-    return { error: "Ramberg-Osgood needs plastic-region data." };
-  }
-
-  const logPairs = fitPairs
-    .map((pair) => {
-      const plasticStrain = pair.x - pair.y / modulusValue;
-      return {
-        x: Math.log(pair.y / yieldStress),
-        y: Math.log(plasticStrain),
-      };
-    })
-    .filter((pair) => Number.isFinite(pair.x) && Number.isFinite(pair.y));
-
-  if (logPairs.length < 3) {
-    return { error: "Ramberg-Osgood fit needs valid plastic strain." };
-  }
-
-  const fit = linearRegression(logPairs);
-  if (!fit) {
-    return { error: "Ramberg-Osgood fit unavailable." };
-  }
-
-  const K = Math.exp(fit.intercept);
-  const n = fit.slope;
-  const meanStrain =
-    fitPairs.reduce((sum, pair) => sum + pair.x, 0) / fitPairs.length;
-  let ssTot = 0;
-  let ssRes = 0;
-
-  fitPairs.forEach((pair) => {
-    const predicted =
-      pair.y / modulusValue + K * (pair.y / yieldStress) ** n;
-    ssTot += (pair.x - meanStrain) ** 2;
-    ssRes += (pair.x - predicted) ** 2;
-  });
-
-  const r2 = ssTot === 0 ? 0 : 1 - ssRes / ssTot;
-  return { K, n, r2, count: fitPairs.length, fitPairs };
-}
-
-function renderElasticChart(
-  modulusResult,
-  useTrueData,
-  truePairs,
-  fitModel,
-  yieldResult,
-) {
+function renderElasticChart(modulusResult, useTrueData, truePairs, fitModel) {
   const stressUnit = stressUnitSelect.value;
   const elasticPairs = modulusResult.pairs;
   const useTruePlastic = useTrueData && truePairs && truePairs.length > 0;
@@ -920,10 +856,7 @@ function renderElasticChart(
     elasticSvg.insertBefore(elasticPointsLayer, elasticCurve);
   }
 
-  const fitResult = buildRegressionFit(plotPairs, fitModel, {
-    modulus: modulusResult,
-    yield: yieldResult,
-  });
+  const fitResult = buildRegressionFit(plotPairs, fitModel);
   if (fitResult && fitResult.fitPoints && fitResult.fitPoints.length > 0) {
     fitR2 = fitResult.r2;
     elasticFit.setAttribute("stroke", "#1d1a12");
@@ -936,7 +869,7 @@ function renderElasticChart(
     regionFitCubic.textContent =
       fitResult.r2 === null ? "R2: --" : `R2: ${fitResult.r2.toFixed(5)}`;
 
-  if (fitModel === "cubic" && useTruePlastic && fitResult.coeffs) {
+    if (fitModel === "cubic" && useTruePlastic && fitResult.coeffs) {
       const markerPairs = plotPairs.map((pair) => ({
         x: pair.x,
         y:
@@ -1287,7 +1220,7 @@ function exponentialFit(pairs) {
   return { a, b, r2 };
 }
 
-function buildRegressionFit(pairs, model, options) {
+function buildRegressionFit(pairs, model) {
   if (!pairs || pairs.length < 2) {
     return { error: "Regression: --" };
   }
@@ -1350,30 +1283,6 @@ function buildRegressionFit(pairs, model, options) {
       r2: fit.r2,
       fitPoints,
       coeffs: fit,
-    };
-  }
-
-  if (model === "ramberg") {
-    const modulusValue = options && options.modulus ? options.modulus.slope : null;
-    const yieldStress = options && options.yield ? options.yield.y : null;
-    const ramberg = estimateRambergOsgood(pairs, modulusValue, yieldStress);
-    if (ramberg.error) {
-      return { error: ramberg.error };
-    }
-    const stressValues = ramberg.fitPairs.map((pair) => pair.y);
-    const minStress = Math.min(...stressValues);
-    const maxStress = Math.max(...stressValues);
-    for (let i = 0; i <= steps; i += 1) {
-      const stress = minStress + ((maxStress - minStress) * i) / steps;
-      const strain =
-        stress / modulusValue + ramberg.K * (stress / yieldStress) ** ramberg.n;
-      fitPoints.push({ x: strain, y: stress });
-    }
-    return {
-      label: `Regression: Ramberg-Osgood (K=${ramberg.K.toFixed(4)}, n=${ramberg.n.toFixed(3)}, sigma0=${yieldStress.toFixed(2)})`,
-      r2: ramberg.r2,
-      fitPoints,
-      coeffs: ramberg,
     };
   }
 
