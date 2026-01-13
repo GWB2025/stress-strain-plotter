@@ -12,3 +12,6 @@ __pycache__/
 # Data & screenshots
 *.csv
 *.png
+
+# Keep reference dataset
+!Al2024-T351.csv
