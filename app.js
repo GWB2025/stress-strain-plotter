@@ -2402,49 +2402,6 @@ function readTheoreticalInputs() {
   };
 }
 
-function readTheoreticalInputsForPlot() {
-  const modulus = readElasticModulus();
-  if (modulus.error || !modulus.value) {
-    return { enabled: true, error: "Enter E to plot the theoretical curve." };
-  }
-  const yieldStrength = readOptionalNumber(
-    theoryYieldInput,
-    "Yield strength",
-  );
-  if (yieldStrength.error) {
-    return { enabled: true, error: yieldStrength.error };
-  }
-  const utsStrength = readOptionalNumber(theoryUtsInput, "UTS");
-  if (utsStrength.error) {
-    return { enabled: true, error: utsStrength.error };
-  }
-  if (!yieldStrength.value || !utsStrength.value) {
-    return { enabled: true, error: "Enter yield strength and UTS." };
-  }
-  if (utsStrength.value <= yieldStrength.value) {
-    return { enabled: true, error: "UTS must be greater than yield strength." };
-  }
-
-  const utsStrainInputValue = readOptionalNumber(
-    theoryUtsStrainInput,
-    "Strain at UTS",
-  );
-  if (utsStrainInputValue.error) {
-    return { enabled: true, error: utsStrainInputValue.error };
-  }
-  const assumedUtsStrain = utsStrainInputValue.value === null;
-  const utsStrain = assumedUtsStrain ? 0.15 : utsStrainInputValue.value;
-
-  return {
-    enabled: true,
-    modulus: modulus.value,
-    yieldStrength: yieldStrength.value,
-    utsStrength: utsStrength.value,
-    utsStrain,
-    assumedUtsStrain,
-  };
-}
-
 function buildTheoreticalCurve(inputs) {
   const modulus = inputs.modulus;
   const yieldStrength = inputs.yieldStrength;
@@ -2604,26 +2561,7 @@ function renderDataPlot(pairs, modulusValue) {
   if (pairs.length === 0) {
     utsIndex = null;
   }
-  if (mode === "theoretical") {
-    const theoryInput = readTheoreticalInputsForPlot();
-    if (theoryInput.error) {
-      dataPlotStatus.textContent = theoryInput.error;
-      return;
-    }
-    const theoryResult = buildTheoreticalCurve(theoryInput);
-    if (theoryResult.error) {
-      dataPlotStatus.textContent = theoryResult.error;
-      return;
-    }
-    theoryResult.points.forEach((pair, index) => {
-      plotted.push({
-        x: pair.x,
-        y: pair.y,
-        label: `Theoretical stress (${stressUnit})`,
-        index,
-      });
-    });
-  } else if (showElasticFit) {
+  if (showElasticFit) {
     if (!baseFit || !baseFit.pairs || baseFit.pairs.length < 2) {
       dataPlotStatus.textContent = "Elastic fit not available.";
       return;
