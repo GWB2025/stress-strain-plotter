@@ -2250,15 +2250,45 @@ function findUtsStrain(pairs) {
   return utsStrain;
 }
 
+function findStrainAtStress(pairs, targetStress) {
+  if (!pairs || pairs.length === 0 || !Number.isFinite(targetStress)) {
+    return null;
+  }
+  let best = pairs[0];
+  let bestDiff = Math.abs(pairs[0].y - targetStress);
+  for (const pair of pairs) {
+    const diff = Math.abs(pair.y - targetStress);
+    if (diff < bestDiff) {
+      best = pair;
+      bestDiff = diff;
+    }
+  }
+  return best ? best.x : null;
+}
+
 function autoFillInputs(pairs, baseModulus, yieldResult, metrics) {
+  const useStressRange = stressRangeActive;
+  const rangeMin = Number(stressMinInput.value.trim());
+  const rangeMax = Number(stressMaxInput.value.trim());
+  const hasRangeMin = Number.isFinite(rangeMin);
+  const hasRangeMax = Number.isFinite(rangeMax);
+
   if (baseModulus && elasticModulusInput && elasticModulusInput.value.trim() === "") {
     elasticModulusInput.value = formatInputValue(baseModulus.slope, 2);
   }
-  if (yieldResult && theoryYieldInput && theoryYieldInput.value.trim() === "") {
-    theoryYieldInput.value = formatInputValue(yieldResult.y, 2);
+  if (theoryYieldInput && theoryYieldInput.value.trim() === "") {
+    if (useStressRange && hasRangeMin) {
+      theoryYieldInput.value = formatInputValue(rangeMin, 2);
+    } else if (yieldResult) {
+      theoryYieldInput.value = formatInputValue(yieldResult.y, 2);
+    }
   }
-  if (metrics && theoryUtsInput && theoryUtsInput.value.trim() === "") {
-    theoryUtsInput.value = formatInputValue(metrics.uts, 2);
+  if (theoryUtsInput && theoryUtsInput.value.trim() === "") {
+    if (useStressRange && hasRangeMax) {
+      theoryUtsInput.value = formatInputValue(rangeMax, 2);
+    } else if (metrics) {
+      theoryUtsInput.value = formatInputValue(metrics.uts, 2);
+    }
   }
   if (
     theoryUtsStrainInput &&
@@ -2266,7 +2296,10 @@ function autoFillInputs(pairs, baseModulus, yieldResult, metrics) {
     pairs &&
     pairs.length > 0
   ) {
-    const utsStrain = findUtsStrain(pairs);
+    const utsStrain =
+      useStressRange && hasRangeMax
+        ? findStrainAtStress(pairs, rangeMax)
+        : findUtsStrain(pairs);
     if (Number.isFinite(utsStrain)) {
       theoryUtsStrainInput.value = formatInputValue(utsStrain, 6);
     }
