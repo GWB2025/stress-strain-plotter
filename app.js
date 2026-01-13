@@ -1412,7 +1412,12 @@ function buildRegressionFit(pairs, model, options) {
   }
 
   if (model === "ramberg") {
-    const modulusValue = options && options.modulus ? options.modulus.slope : null;
+    const modulusOverride = readElasticModulus().value;
+    const modulusValue = Number.isFinite(modulusOverride)
+      ? modulusOverride
+      : options && options.modulus
+      ? options.modulus.slope
+      : null;
     const yieldStrain = options && options.yield ? options.yield.x : null;
     const yieldStress = options && options.yield ? options.yield.y : null;
     const useTrueData = options && options.trueData;
