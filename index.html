@@ -107,6 +107,23 @@
           </div>
 
           <div class="file-block">
+            <label class="checkbox-row" title="Overlay a theoretical Hollomon curve using E, yield, and UTS inputs.">
+              <input id="showTheoretical" type="checkbox" title="Overlay a theoretical Hollomon curve using E, yield, and UTS inputs." />
+              Show theoretical curve (Hollomon)
+            </label>
+          </div>
+
+          <div class="file-block">
+            <label for="theoryYield" title="Enter the 0.2% offset yield strength (same units as stress).">Yield strength (0.2% offset)</label>
+            <input id="theoryYield" type="number" step="any" placeholder="e.g. 345" title="Enter the 0.2% offset yield strength (same units as stress)." />
+            <label for="theoryUts" title="Enter ultimate tensile strength (same units as stress).">UTS (ultimate tensile strength)</label>
+            <input id="theoryUts" type="number" step="any" placeholder="e.g. 470" title="Enter ultimate tensile strength (same units as stress)." />
+            <label for="theoryUtsStrain" title="Enter the engineering strain at UTS; leave blank to assume 0.15.">Engineering strain at UTS (optional)</label>
+            <input id="theoryUtsStrain" type="number" step="any" placeholder="e.g. 0.15" title="Enter the engineering strain at UTS; leave blank to assume 0.15." />
+            <p id="theoryStatus" class="file-helper">Uses E above. If strain at UTS is blank, assumes 0.15.</p>
+          </div>
+
+          <div class="file-block">
             <label for="plasticStrainStep" title="Choose the strain increment for plastic region output.">Plastic output strain step</label>
             <input
               id="plasticStrainStep"
@@ -233,6 +250,10 @@
                 <span class="dot true"></span>
                 <span>True</span>
               </div>
+              <div class="legend-item">
+                <span class="dot theoretical"></span>
+                <span>Theoretical</span>
+              </div>
             </div>
           </div>
 
@@ -253,6 +274,7 @@
               <g id="axes"></g>
               <polyline id="curve" fill="none" stroke="url(#lineGlow)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
               <polyline id="trueCurve" fill="none" stroke="#1d1a12" stroke-width="2.5" stroke-dasharray="6 6" stroke-linecap="round" stroke-linejoin="round" />
+              <polyline id="theoreticalCurve" fill="none" stroke="#2e6bd9" stroke-width="2.5" stroke-dasharray="10 6" stroke-linecap="round" stroke-linejoin="round" />
               <polyline id="elastic" fill="none" stroke="#8a3d0a" stroke-width="2.5" stroke-dasharray="6 6" stroke-linecap="round" stroke-linejoin="round" />
               <polyline id="offsetLine" fill="none" stroke="#1d1a12" stroke-width="2" stroke-dasharray="4 6" stroke-linecap="round" stroke-linejoin="round" />
               <circle id="yieldPoint" class="yield-point" r="5" />
@@ -327,6 +349,6 @@
       </main>
     </div>
 
-    <script src="app.js?v=55"></script>
+    <script src="app.js?v=56"></script>
   </body>
 </html>

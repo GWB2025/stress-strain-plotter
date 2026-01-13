@@ -22,6 +22,11 @@ const selectPlasticLineRangeBtn = document.querySelector("#selectPlasticLineRang
 const referenceBtn = document.querySelector("#referenceBtn");
 const referenceInfo = document.querySelector("#referenceInfo");
 const elasticModulusInput = document.querySelector("#elasticModulusInput");
+const showTheoreticalCheckbox = document.querySelector("#showTheoretical");
+const theoryYieldInput = document.querySelector("#theoryYield");
+const theoryUtsInput = document.querySelector("#theoryUts");
+const theoryUtsStrainInput = document.querySelector("#theoryUtsStrain");
+const theoryStatus = document.querySelector("#theoryStatus");
 const plasticStrainStepInput = document.querySelector("#plasticStrainStep");
 const plasticOutput = document.querySelector("#plasticOutput");
 const savePlasticBtn = document.querySelector("#savePlasticBtn");
@@ -58,6 +63,7 @@ const grid = document.querySelector("#grid");
 const axes = document.querySelector("#axes");
 const curve = document.querySelector("#curve");
 const trueCurve = document.querySelector("#trueCurve");
+const theoreticalCurve = document.querySelector("#theoreticalCurve");
 const elasticLine = document.querySelector("#elastic");
 const offsetLine = document.querySelector("#offsetLine");
 const yieldPoint = document.querySelector("#yieldPoint");
@@ -204,6 +210,7 @@ function clearChart() {
   pointsLayer.innerHTML = "";
   curve.setAttribute("points", "");
   trueCurve.setAttribute("points", "");
+  theoreticalCurve.setAttribute("points", "");
   elasticLine.setAttribute("points", "");
   offsetLine.setAttribute("points", "");
   yieldPoint.setAttribute("cx", "-999");
@@ -372,6 +379,7 @@ function renderChart(pairs, overridePairs) {
   const truePairs = showTrue ? computeTruePairs(pairs) : [];
   const truePlasticPairs = getTruePlasticPairs(pairs, baseModulus);
   const elasticModulus = readElasticModulus();
+  const theoryInput = readTheoreticalInputs();
   const plasticStrainStep = readPlasticStrainStep(false);
   const hardeningPairs = overridePairs || pairs;
   let yieldResult = null;
@@ -404,6 +412,36 @@ function renderChart(pairs, overridePairs) {
     trueCurve.setAttribute("points", truePoints);
   } else {
     trueCurve.setAttribute("points", "");
+  }
+
+  if (theoryInput.enabled) {
+    const theoryResult = buildTheoreticalCurve(theoryInput);
+    if (theoryResult.error) {
+      theoreticalCurve.setAttribute("points", "");
+      if (theoryStatus) {
+        theoryStatus.textContent = theoryResult.error;
+      }
+    } else {
+      const theoryScaled = renderPoints(theoryResult.points, xDomain, yDomain, chartBox);
+      const theoryPoints = theoryScaled
+        .map((point) => `${point.x},${point.y}`)
+        .join(" ");
+      theoreticalCurve.setAttribute("points", theoryPoints);
+      if (theoryStatus) {
+        const epsTag = theoryResult.assumedUtsStrain ? "assumed" : "input";
+        theoryStatus.textContent = `Theoretical curve: n=${theoryResult.n.toFixed(
+          3,
+        )}, K=${theoryResult.K.toFixed(2)} ${stressUnit} (${epsTag} eps_uts=${theoryResult.utsStrain.toFixed(
+          3,
+        )}).`;
+      }
+    }
+  } else {
+    theoreticalCurve.setAttribute("points", "");
+    if (theoryStatus) {
+      theoryStatus.textContent =
+        "Uses E above. If strain at UTS is blank, assumes 0.15.";
+    }
   }
 
   const metrics = computeMetrics(pairs, baseModulus);
@@ -1571,6 +1609,30 @@ elasticModulusInput.addEventListener("input", () => {
   refreshFromSource();
 });
 
+if (showTheoreticalCheckbox) {
+  showTheoreticalCheckbox.addEventListener("change", () => {
+    refreshFromSource();
+  });
+}
+
+if (theoryYieldInput) {
+  theoryYieldInput.addEventListener("input", () => {
+    refreshFromSource();
+  });
+}
+
+if (theoryUtsInput) {
+  theoryUtsInput.addEventListener("input", () => {
+    refreshFromSource();
+  });
+}
+
+if (theoryUtsStrainInput) {
+  theoryUtsStrainInput.addEventListener("input", () => {
+    refreshFromSource();
+  });
+}
+
 plasticStrainStepInput.addEventListener("input", () => {
   refreshFromSource();
 });
@@ -2158,6 +2220,137 @@ function readElasticModulus() {
     return { error: "Elastic modulus E must be a positive number." };
   }
   return { value };
+}
+
+function readOptionalNumber(input, label) {
+  if (!input) {
+    return { value: null };
+  }
+  const raw = input.value.trim();
+  if (raw.length === 0) {
+    return { value: null };
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    return { error: `${label} must be a positive number.` };
+  }
+  return { value };
+}
+
+function readTheoreticalInputs() {
+  if (!showTheoreticalCheckbox || !showTheoreticalCheckbox.checked) {
+    return { enabled: false };
+  }
+  const modulus = readElasticModulus();
+  if (modulus.error || !modulus.value) {
+    return { enabled: true, error: "Enter E to build a theoretical curve." };
+  }
+
+  const yieldStrength = readOptionalNumber(
+    theoryYieldInput,
+    "Yield strength",
+  );
+  if (yieldStrength.error) {
+    return { enabled: true, error: yieldStrength.error };
+  }
+  const utsStrength = readOptionalNumber(theoryUtsInput, "UTS");
+  if (utsStrength.error) {
+    return { enabled: true, error: utsStrength.error };
+  }
+  if (!yieldStrength.value || !utsStrength.value) {
+    return { enabled: true, error: "Enter yield strength and UTS." };
+  }
+  if (utsStrength.value <= yieldStrength.value) {
+    return { enabled: true, error: "UTS must be greater than yield strength." };
+  }
+
+  const utsStrainInputValue = readOptionalNumber(
+    theoryUtsStrainInput,
+    "Strain at UTS",
+  );
+  if (utsStrainInputValue.error) {
+    return { enabled: true, error: utsStrainInputValue.error };
+  }
+  const assumedUtsStrain = utsStrainInputValue.value === null;
+  const utsStrain = assumedUtsStrain ? 0.15 : utsStrainInputValue.value;
+
+  return {
+    enabled: true,
+    modulus: modulus.value,
+    yieldStrength: yieldStrength.value,
+    utsStrength: utsStrength.value,
+    utsStrain,
+    assumedUtsStrain,
+  };
+}
+
+function buildTheoreticalCurve(inputs) {
+  const modulus = inputs.modulus;
+  const yieldStrength = inputs.yieldStrength;
+  const utsStrength = inputs.utsStrength;
+  const utsStrain = inputs.utsStrain;
+
+  if (!Number.isFinite(utsStrain) || utsStrain <= 0) {
+    return { error: "Strain at UTS must be a positive number." };
+  }
+
+  const yieldStrain = yieldStrength / modulus + 0.002;
+  const trueYieldStrain = Math.log1p(yieldStrain);
+  const trueYieldStress = yieldStrength * (1 + yieldStrain);
+  const plasticYieldStrain = trueYieldStrain - trueYieldStress / modulus;
+
+  const trueUtsStrain = Math.log1p(utsStrain);
+  const trueUtsStress = utsStrength * (1 + utsStrain);
+  const plasticUtsStrain = trueUtsStrain - trueUtsStress / modulus;
+
+  if (!Number.isFinite(plasticYieldStrain) || !Number.isFinite(plasticUtsStrain)) {
+    return { error: "Unable to compute plastic strain. Check E and inputs." };
+  }
+
+  if (plasticYieldStrain <= 0 || plasticUtsStrain <= plasticYieldStrain) {
+    return {
+      error: "Plastic strain must be positive. Check E units and strain at UTS.",
+    };
+  }
+
+  const n =
+    Math.log(trueUtsStress / trueYieldStress) /
+    Math.log(plasticUtsStrain / plasticYieldStrain);
+  if (!Number.isFinite(n) || n <= 0) {
+    return { error: "Unable to solve for hardening exponent n." };
+  }
+
+  const K = trueYieldStress / plasticYieldStrain ** n;
+  if (!Number.isFinite(K) || K <= 0) {
+    return { error: "Unable to solve for strength coefficient K." };
+  }
+
+  const points = [];
+  const elasticSteps = 20;
+  for (let i = 0; i <= elasticSteps; i += 1) {
+    const strain = (yieldStrain * i) / elasticSteps;
+    points.push({ x: strain, y: modulus * strain });
+  }
+
+  const plasticSteps = 80;
+  for (let i = 0; i <= plasticSteps; i += 1) {
+    const plasticStrain =
+      plasticYieldStrain +
+      ((plasticUtsStrain - plasticYieldStrain) * i) / plasticSteps;
+    const trueStress = K * plasticStrain ** n;
+    const trueStrain = plasticStrain + trueStress / modulus;
+    const engStrain = Math.expm1(trueStrain);
+    const engStress = trueStress / (1 + engStrain);
+    points.push({ x: engStrain, y: engStress });
+  }
+
+  return {
+    points,
+    n,
+    K,
+    utsStrain,
+    assumedUtsStrain: inputs.assumedUtsStrain,
+  };
 }
 
 function renderDataTable(pairs, modulusValue) {
