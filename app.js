@@ -378,9 +378,9 @@ function renderChart(pairs, overridePairs) {
   const showTrue = showTrueCheckbox.checked;
   const truePairs = showTrue ? computeTruePairs(pairs) : [];
   const truePlasticPairs = getTruePlasticPairs(pairs, baseModulus);
-  const elasticModulus = readElasticModulus();
-  const theoryInput = readTheoreticalInputs();
-  const plasticStrainStep = readPlasticStrainStep(false);
+  let elasticModulus = null;
+  let theoryInput = null;
+  let plasticStrainStep = null;
   const hardeningPairs = overridePairs || pairs;
   let yieldResult = null;
 
@@ -414,35 +414,6 @@ function renderChart(pairs, overridePairs) {
     trueCurve.setAttribute("points", "");
   }
 
-  if (theoryInput.enabled) {
-    const theoryResult = buildTheoreticalCurve(theoryInput);
-    if (theoryResult.error) {
-      theoreticalCurve.setAttribute("points", "");
-      if (theoryStatus) {
-        theoryStatus.textContent = theoryResult.error;
-      }
-    } else {
-      const theoryScaled = renderPoints(theoryResult.points, xDomain, yDomain, chartBox);
-      const theoryPoints = theoryScaled
-        .map((point) => `${point.x},${point.y}`)
-        .join(" ");
-      theoreticalCurve.setAttribute("points", theoryPoints);
-      if (theoryStatus) {
-        const epsTag = theoryResult.assumedUtsStrain ? "assumed" : "input";
-        theoryStatus.textContent = `Theoretical curve: n=${theoryResult.n.toFixed(
-          3,
-        )}, K=${theoryResult.K.toFixed(2)} ${stressUnit} (${epsTag} eps_uts=${theoryResult.utsStrain.toFixed(
-          3,
-        )}).`;
-      }
-    }
-  } else {
-    theoreticalCurve.setAttribute("points", "");
-    if (theoryStatus) {
-      theoryStatus.textContent =
-        "Uses E above. If strain at UTS is blank, assumes 0.15.";
-    }
-  }
 
   const metrics = computeMetrics(pairs, baseModulus);
   const hardening = baseModulus
@@ -486,6 +457,41 @@ function renderChart(pairs, overridePairs) {
     yieldPoint.style.opacity = "0";
     yieldPointText.textContent = "Yield (0.2%): --";
     yieldPointTop.textContent = "Yield (0.2%): --";
+  }
+
+  autoFillInputs(pairs, baseModulus, yieldResult, metrics);
+  elasticModulus = readElasticModulus();
+  theoryInput = readTheoreticalInputs();
+  plasticStrainStep = readPlasticStrainStep(false);
+
+  if (theoryInput.enabled) {
+    const theoryResult = buildTheoreticalCurve(theoryInput);
+    if (theoryResult.error) {
+      theoreticalCurve.setAttribute("points", "");
+      if (theoryStatus) {
+        theoryStatus.textContent = theoryResult.error;
+      }
+    } else {
+      const theoryScaled = renderPoints(theoryResult.points, xDomain, yDomain, chartBox);
+      const theoryPoints = theoryScaled
+        .map((point) => `${point.x},${point.y}`)
+        .join(" ");
+      theoreticalCurve.setAttribute("points", theoryPoints);
+      if (theoryStatus) {
+        const epsTag = theoryResult.assumedUtsStrain ? "assumed" : "input";
+        theoryStatus.textContent = `Theoretical curve: n=${theoryResult.n.toFixed(
+          3,
+        )}, K=${theoryResult.K.toFixed(2)} ${stressUnit} (${epsTag} eps_uts=${theoryResult.utsStrain.toFixed(
+          3,
+        )}).`;
+      }
+    }
+  } else {
+    theoreticalCurve.setAttribute("points", "");
+    if (theoryStatus) {
+      theoryStatus.textContent =
+        "Uses E above. If strain at UTS is blank, assumes 0.15.";
+    }
   }
   const hardeningAllowed =
     baseModulus &&
@@ -2220,6 +2226,54 @@ function readElasticModulus() {
     return { error: "Elastic modulus E must be a positive number." };
   }
   return { value };
+}
+
+function formatInputValue(value, digits) {
+  if (!Number.isFinite(value)) {
+    return "";
+  }
+  return value.toFixed(digits);
+}
+
+function findUtsStrain(pairs) {
+  if (!pairs || pairs.length === 0) {
+    return null;
+  }
+  let maxStress = pairs[0].y;
+  let utsStrain = pairs[0].x;
+  for (const pair of pairs) {
+    if (pair.y > maxStress) {
+      maxStress = pair.y;
+      utsStrain = pair.x;
+    }
+  }
+  return utsStrain;
+}
+
+function autoFillInputs(pairs, baseModulus, yieldResult, metrics) {
+  if (baseModulus && elasticModulusInput && elasticModulusInput.value.trim() === "") {
+    elasticModulusInput.value = formatInputValue(baseModulus.slope, 2);
+  }
+  if (yieldResult && theoryYieldInput && theoryYieldInput.value.trim() === "") {
+    theoryYieldInput.value = formatInputValue(yieldResult.y, 2);
+  }
+  if (metrics && theoryUtsInput && theoryUtsInput.value.trim() === "") {
+    theoryUtsInput.value = formatInputValue(metrics.uts, 2);
+  }
+  if (
+    theoryUtsStrainInput &&
+    theoryUtsStrainInput.value.trim() === "" &&
+    pairs &&
+    pairs.length > 0
+  ) {
+    const utsStrain = findUtsStrain(pairs);
+    if (Number.isFinite(utsStrain)) {
+      theoryUtsStrainInput.value = formatInputValue(utsStrain, 6);
+    }
+  }
+  if (plasticStrainStepInput && plasticStrainStepInput.value.trim() === "") {
+    plasticStrainStepInput.value = "0.005";
+  }
 }
 
 function readOptionalNumber(input, label) {
