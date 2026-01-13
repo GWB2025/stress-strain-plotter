@@ -2,7 +2,7 @@
 
 A browser-based app for plotting engineering and true stress-strain curves, fitting elastic/plastic regions, and generating analysis outputs for materials workflows (including ANSYS-style plastic strain tables).
 
-[![Launch Browser App](launch_browser_app.png)](https://gwb2025.github.io/stress-strain-plotter/)
+[![Launch in Browser](https://img.shields.io/badge/Launch-Browser%20App-blue)](https://gwb2025.github.io/stress-strain-plotter/)
 
 ## Features
 
