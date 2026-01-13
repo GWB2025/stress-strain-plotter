@@ -2545,56 +2545,28 @@ function renderDataPlot(pairs, modulusValue) {
       dataPlotFit.setAttribute("points", fitLine);
     }
     plotStatus = `Linear fit: y=${baseFit.slope.toFixed(2)}x ${formatSigned(baseFit.intercept)} | R2 ${baseFit.r2.toFixed(4)} | ${plotted.length} pts`;
-    } else {
-      if (fitMode !== "none") {
-        const fitPairs = plotted.map((pair) => ({
-          x:
-            mode === "truePlasticStress" && pair.plasticX !== undefined
-              ? pair.plasticX
-              : pair.x,
-          y: pair.y,
-        }));
-        if (fitMode === "ramberg") {
-          if (mode !== "stress") {
-            plotStatus = "Ramberg-Osgood requires stress vs strain.";
-          } else if (!baseFit || !yieldPoint) {
-            plotStatus = "Ramberg-Osgood needs elastic fit and yield point.";
-          } else {
-            const regression = buildRegressionFit(fitPairs, fitMode, {
-              modulus: baseFit,
-              yield: yieldPoint,
-            });
-            if (regression && regression.fitPoints && regression.fitPoints.length > 0) {
-              const fitScaled = renderPoints(
-                regression.fitPoints,
-                xDomain,
-                yDomain,
-                chartBox,
-              );
-              const fitLine = fitScaled.map((point) => `${point.x},${point.y}`).join(" ");
-              if (dataPlotFit) {
-                dataPlotFit.setAttribute("points", fitLine);
-              }
-              plotStatus = `${regression.label} | R2 ${regression.r2.toFixed(4)} | ${plotted.length} pts`;
-            } else if (regression && regression.error) {
-              plotStatus = regression.error;
-            }
-          }
-        } else {
-          const regression = buildRegressionFit(fitPairs, fitMode);
-          if (regression && regression.fitPoints && regression.fitPoints.length > 0) {
-            const fitScaled = renderPoints(regression.fitPoints, xDomain, yDomain, chartBox);
-            const fitLine = fitScaled.map((point) => `${point.x},${point.y}`).join(" ");
-            if (dataPlotFit) {
-              dataPlotFit.setAttribute("points", fitLine);
-            }
-            plotStatus = `${regression.label} | R2 ${regression.r2.toFixed(4)} | ${plotted.length} pts`;
-          } else if (regression && regression.error) {
-            plotStatus = regression.error;
-          }
+  } else {
+    if (fitMode !== "none") {
+      const fitPairs = plotted.map((pair) => ({
+        x:
+          mode === "truePlasticStress" && pair.plasticX !== undefined
+            ? pair.plasticX
+            : pair.x,
+        y: pair.y,
+      }));
+      const regression = buildRegressionFit(fitPairs, fitMode);
+      if (regression && regression.fitPoints && regression.fitPoints.length > 0) {
+        const fitScaled = renderPoints(regression.fitPoints, xDomain, yDomain, chartBox);
+        const fitLine = fitScaled.map((point) => `${point.x},${point.y}`).join(" ");
+        if (dataPlotFit) {
+          dataPlotFit.setAttribute("points", fitLine);
         }
+        plotStatus = `${regression.label} | R2 ${regression.r2.toFixed(4)} | ${plotted.length} pts`;
+      } else if (regression && regression.error) {
+        plotStatus = regression.error;
       }
     }
+  }
   dataPlotStatus.textContent = plotStatus;
 }
 
