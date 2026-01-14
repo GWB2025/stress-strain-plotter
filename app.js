@@ -199,6 +199,42 @@ function scale(value, domainMin, domainMax, rangeMin, rangeMax) {
   );
 }
 
+function findUtsIndex(pairs) {
+  if (!pairs || pairs.length === 0) {
+    return null;
+  }
+  let maxStress = -Infinity;
+  let maxIndex = 0;
+  for (let i = 0; i < pairs.length; i += 1) {
+    const stress = pairs[i].y;
+    if (stress > maxStress) {
+      maxStress = stress;
+      maxIndex = i;
+    }
+  }
+  return maxIndex;
+}
+
+function computeTrueStrainStress(pair) {
+  if (!pair || pair.x <= -1) {
+    return { trueStrain: null, trueStress: null };
+  }
+  const trueStrain = Math.log1p(pair.x);
+  const trueStress = pair.y * (1 + pair.x);
+  if (!Number.isFinite(trueStrain) || !Number.isFinite(trueStress)) {
+    return { trueStrain: null, trueStress: null };
+  }
+  return { trueStrain, trueStress };
+}
+
+function engineeringPairToTruePair(pair) {
+  const { trueStrain, trueStress } = computeTrueStrainStress(pair);
+  if (trueStrain === null || trueStress === null) {
+    return null;
+  }
+  return { x: trueStrain, y: trueStress };
+}
+
 function clearChart() {
   grid.innerHTML = "";
   axes.innerHTML = "";
@@ -452,7 +488,7 @@ function renderChart(pairs, overridePairs, shouldAutoFill) {
     yieldPointTop.textContent = "Yield (0.2%): --";
   }
 
-  autoFillInputs(pairs, baseModulus, yieldResult, metrics, shouldAutoFill);
+  autoFillInputs(baseModulus, shouldAutoFill);
   elasticModulus = readElasticModulus();
   plasticStrainStep = readPlasticStrainStep(false);
   const hardeningAllowed =
@@ -567,16 +603,7 @@ function renderChart(pairs, overridePairs, shouldAutoFill) {
     // Skip animation if the SVG path is not ready yet.
   }
 
-  let utsIndex = null;
-  if (metrics) {
-    let maxStress = -Infinity;
-    for (let i = 0; i < pairs.length; i += 1) {
-      if (pairs[i].y > maxStress) {
-        maxStress = pairs[i].y;
-        utsIndex = i;
-      }
-    }
-  }
+  const utsIndex = metrics ? findUtsIndex(pairs) : null;
 
   scaled.forEach((point, index) => {
     const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
@@ -643,23 +670,13 @@ function computeTruePairs(pairs) {
   if (pairs.length === 0) {
     return [];
   }
-  const utsIndex = pairs.reduce(
-    (maxIndex, pair, index) => (pair.y > pairs[maxIndex].y ? index : maxIndex),
-    0,
-  );
-  const truncated = pairs.slice(0, utsIndex + 1);
-  return truncated
-    .map((pair) => {
-      if (pair.x <= -1) {
-        return null;
-      }
-      const strain = Math.log1p(pair.x);
-      const stress = pair.y * (1 + pair.x);
-      if (!Number.isFinite(strain) || !Number.isFinite(stress)) {
-        return null;
-      }
-      return { x: strain, y: stress };
-    })
+  const utsIndex = findUtsIndex(pairs);
+  if (utsIndex === null) {
+    return [];
+  }
+  return pairs
+    .slice(0, utsIndex + 1)
+    .map(engineeringPairToTruePair)
     .filter(Boolean);
 }
 
@@ -671,24 +688,14 @@ function getTruePlasticPairs(pairs, modulusResult) {
   if (!yieldPoint) {
     return [];
   }
-  const utsIndex = pairs.reduce(
-    (maxIndex, pair, index) => (pair.y > pairs[maxIndex].y ? index : maxIndex),
-    0,
-  );
-  const truncated = pairs.slice(0, utsIndex + 1);
-  return truncated
+  const utsIndex = findUtsIndex(pairs);
+  if (utsIndex === null) {
+    return [];
+  }
+  return pairs
+    .slice(0, utsIndex + 1)
     .filter((pair) => pair.x >= yieldPoint.x)
-    .map((pair) => {
-      if (pair.x <= -1) {
-        return null;
-      }
-      const strain = Math.log1p(pair.x);
-      const stress = pair.y * (1 + pair.x);
-      if (!Number.isFinite(strain) || !Number.isFinite(stress)) {
-        return null;
-      }
-      return { x: strain, y: stress };
-    })
+    .map(engineeringPairToTruePair)
     .filter(Boolean);
 }
 
@@ -755,11 +762,10 @@ function estimatePowerHardening(pairs, modulusResult) {
   let plasticCount = 0;
 
   for (const pair of pairs) {
-    if (pair.x <= -1) {
+    const { trueStrain, trueStress } = computeTrueStrainStress(pair);
+    if (trueStrain === null || trueStress === null) {
       continue;
     }
-    const trueStrain = Math.log1p(pair.x);
-    const trueStress = pair.y * (1 + pair.x);
     if (trueStrain <= 0 || trueStress <= 0) {
       continue;
     }
@@ -2190,7 +2196,7 @@ function buildAutoFillKey(pairs) {
   return `${pairs.length}:${first.x},${first.y}:${last.x},${last.y}`;
 }
 
-function autoFillInputs(pairs, baseModulus, yieldResult, metrics, force) {
+function autoFillInputs(baseModulus, force) {
   if (!force) {
     return;
   }
@@ -2216,9 +2222,7 @@ function renderDataTable(pairs, modulusValue) {
   const fragment = document.createDocumentFragment();
   pairs.forEach((pair, index) => {
     const row = document.createElement("tr");
-    const trueStrain = pair.x > -1 ? Math.log1p(pair.x) : null;
-    const trueStress =
-      trueStrain === null ? null : pair.y * (1 + pair.x);
+    const { trueStrain, trueStress } = computeTrueStrainStress(pair);
     const plasticStrain =
       trueStrain !== null && modulusValue
         ? trueStrain - trueStress / modulusValue
@@ -2277,22 +2281,12 @@ function renderDataPlot(pairs, modulusValue) {
   const stressUnit = stressUnitSelect.value;
   const baseFit = estimateYoungsModulus(pairs);
   const yieldPoint = baseFit ? estimateOffsetYield(pairs, baseFit) : null;
-  let utsValue = pairs[0].y;
-  let utsIndex = 0;
-  for (let i = 0; i < pairs.length; i += 1) {
-    if (pairs[i].y > utsValue) {
-      utsValue = pairs[i].y;
-      utsIndex = i;
-    }
-  }
+  const utsIndex = findUtsIndex(pairs);
   const filterMode = mode === "yieldRange" || mode === "utsRange";
   const plotted = [];
   const showElasticFit = mode === "elasticFit";
   const showYieldFit = mode === "yieldRange" && baseFit;
   const showOffset = mode === "yieldRange" && baseFit;
-  if (pairs.length === 0) {
-    utsIndex = null;
-  }
   if (showElasticFit) {
     if (!baseFit || !baseFit.pairs || baseFit.pairs.length < 2) {
       dataPlotStatus.textContent = "Elastic fit not available.";
@@ -2303,9 +2297,7 @@ function renderDataPlot(pairs, modulusValue) {
     });
   } else {
     pairs.forEach((pair, index) => {
-      const trueStrain = pair.x > -1 ? Math.log1p(pair.x) : null;
-      const trueStress =
-        trueStrain === null ? null : pair.y * (1 + pair.x);
+      const { trueStrain, trueStress } = computeTrueStrainStress(pair);
       let yValue = null;
       let yLabel = "";
       let xValue = pair.x;
@@ -2364,12 +2356,6 @@ function renderDataPlot(pairs, modulusValue) {
       }
       if (
         mode === "plasticStrain" &&
-        (!yieldPoint || pair.y < yieldPoint.y || index > utsIndex)
-      ) {
-        return;
-      }
-      if (
-        mode === "truePlasticStress" &&
         (!yieldPoint || pair.y < yieldPoint.y || index > utsIndex)
       ) {
         return;
@@ -2435,7 +2421,7 @@ function renderDataPlot(pairs, modulusValue) {
     circle.setAttribute("r", 2.5);
     circle.setAttribute("class", "point");
     const originalIndex = plotted[i]?.index;
-    if (originalIndex !== null && utsIndex !== null && originalIndex > utsIndex) {
+    if (originalIndex !== null && originalIndex > utsIndex) {
       circle.classList.add("post-uts");
     }
     dataPlotPoints.appendChild(circle);
