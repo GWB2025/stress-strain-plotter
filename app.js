@@ -556,13 +556,14 @@ function renderChart(pairs, overridePairs, shouldAutoFill) {
       if (!cubic) {
         plasticOutput.value = "Unable to fit cubic to plastic region data.";
       } else {
+        const yieldTrue = yieldResult ? engineeringPairToTruePair(yieldResult) : null;
         plasticOutput.value = buildPlasticOutput(
           truePlasticPairs,
           elasticModulus.value,
           stressUnit,
           cubic,
-          yieldResult ? yieldResult.x : null,
-          yieldResult ? yieldResult.y : null,
+          yieldTrue ? yieldTrue.x : null,
+          yieldTrue ? yieldTrue.y : null,
           plasticStrainStep.value,
         );
       }
@@ -2532,72 +2533,133 @@ function buildPlasticOutput(
   modulusValue,
   stressUnit,
   cubic,
-  yieldStrain,
-  yieldStress,
-  strainStep,
+  yieldTrueStrain,
+  yieldTrueStress,
+  plasticStrainStep,
 ) {
   const header = `plastic_strain,true_stress (${stressUnit})`;
   const sorted = [...pairs].sort((a, b) => a.x - b.x);
+  if (sorted.length === 0) {
+    return header;
+  }
   const eps = 1e-12;
-  let selected = sorted;
-  if (Number.isFinite(yieldStrain)) {
-    const afterYield = sorted.filter((pair) => pair.x > yieldStrain + eps);
-    if (afterYield.length > 0) {
-      selected = afterYield;
-    }
-  }
 
-  const strainValues = [];
-  if (strainStep && selected.length > 1) {
-    const minX = selected[0].x;
-    const maxX = selected[selected.length - 1].x;
-    for (let x = minX; x <= maxX + eps; x += strainStep) {
-      strainValues.push(x);
-    }
-    const last = strainValues[strainValues.length - 1];
-    if (Math.abs(maxX - last) > eps) {
-      strainValues.push(maxX);
-    }
-  } else {
-    strainValues.push(...selected.map((pair) => pair.x));
-  }
+  const minStrain = sorted[0].x;
+  const maxStrain = sorted[sorted.length - 1].x;
+  const stressFromCubic = (strain) =>
+    cubic.a * strain ** 3 + cubic.b * strain ** 2 + cubic.c * strain + cubic.d;
+  const rawPlasticFromStrain = (strain) => strain - stressFromCubic(strain) / modulusValue;
 
   const targetYieldStress =
-    Number.isFinite(yieldStress) ? Math.round(yieldStress) : null;
-  const fitted = strainValues.map((strain) => ({
-    strain,
-    stress:
-      cubic.a * strain ** 3 + cubic.b * strain ** 2 + cubic.c * strain + cubic.d,
-  }));
+    Number.isFinite(yieldTrueStress) ? Math.round(yieldTrueStress) : null;
 
-  let baseIndex = 0;
-  if (targetYieldStress !== null && fitted.length > 0) {
+  let baseStrain = minStrain;
+  if (Number.isFinite(yieldTrueStrain)) {
+    baseStrain = Math.min(Math.max(yieldTrueStrain, minStrain), maxStrain);
+  }
+  if (targetYieldStress !== null) {
     let bestDiff = Infinity;
-    fitted.forEach((pair, index) => {
-      const diff = Math.abs(pair.stress - targetYieldStress);
+    let bestStrain = baseStrain;
+    sorted.forEach((pair) => {
+      if (Number.isFinite(yieldTrueStrain) && pair.x + eps < yieldTrueStrain) {
+        return;
+      }
+      const predicted = stressFromCubic(pair.x);
+      const diff = Math.abs(predicted - targetYieldStress);
       if (diff < bestDiff) {
         bestDiff = diff;
-        baseIndex = index;
+        bestStrain = pair.x;
       }
     });
+    baseStrain = bestStrain;
   }
 
-  const baseStrain = fitted[baseIndex].strain;
-  const baseStress =
-    targetYieldStress !== null ? targetYieldStress : fitted[baseIndex].stress;
-
+  const baseStress = targetYieldStress !== null ? targetYieldStress : stressFromCubic(baseStrain);
   const basePlasticStrain = baseStrain - baseStress / modulusValue;
+
+  let maxPlasticStrain = rawPlasticFromStrain(maxStrain) - basePlasticStrain;
+  if (!Number.isFinite(maxPlasticStrain) || maxPlasticStrain < 0) {
+    maxPlasticStrain = 0;
+  }
+
+  const targets = [0];
+  if (plasticStrainStep && maxPlasticStrain > eps) {
+    const maxRows = 10000;
+    const stepCount = Math.floor(maxPlasticStrain / plasticStrainStep);
+    const cappedSteps = Math.min(stepCount, maxRows - 2);
+    for (let i = 1; i <= cappedSteps; i += 1) {
+      targets.push(i * plasticStrainStep);
+    }
+    const last = targets[targets.length - 1];
+    if (targets.length < maxRows && Math.abs(maxPlasticStrain - last) > eps) {
+      targets.push(maxPlasticStrain);
+    }
+  } else {
+    sorted.forEach((pair) => {
+      if (pair.x + eps < baseStrain) {
+        return;
+      }
+      const plasticStrain = rawPlasticFromStrain(pair.x) - basePlasticStrain;
+      if (!Number.isFinite(plasticStrain) || plasticStrain <= eps) {
+        return;
+      }
+      targets.push(plasticStrain);
+    });
+    targets.sort((a, b) => a - b);
+  }
+
+  const lowerBound = baseStrain;
+  const upperBound = maxStrain;
+  const plasticLower = rawPlasticFromStrain(lowerBound);
+  const plasticUpper = rawPlasticFromStrain(upperBound);
+  const increasing = plasticUpper >= plasticLower;
+  const solveStrain = (targetRawPlasticStrain) => {
+    if (!Number.isFinite(targetRawPlasticStrain)) {
+      return lowerBound;
+    }
+    if (increasing) {
+      if (targetRawPlasticStrain <= plasticLower) {
+        return lowerBound;
+      }
+      if (targetRawPlasticStrain >= plasticUpper) {
+        return upperBound;
+      }
+    } else {
+      if (targetRawPlasticStrain >= plasticLower) {
+        return lowerBound;
+      }
+      if (targetRawPlasticStrain <= plasticUpper) {
+        return upperBound;
+      }
+    }
+
+    let left = lowerBound;
+    let right = upperBound;
+    for (let i = 0; i < 70; i += 1) {
+      const mid = (left + right) / 2;
+      const value = rawPlasticFromStrain(mid);
+      if (!Number.isFinite(value)) {
+        break;
+      }
+      const goRight = increasing ? value < targetRawPlasticStrain : value > targetRawPlasticStrain;
+      if (goRight) {
+        left = mid;
+      } else {
+        right = mid;
+      }
+    }
+    return (left + right) / 2;
+  };
+
   const lines = [];
   lines.push(`0.000000,${baseStress.toFixed(2)}`);
-
-  fitted.forEach((pair, index) => {
-    if (index === baseIndex) {
+  targets.slice(1).forEach((plasticStrain) => {
+    const strain = solveStrain(plasticStrain + basePlasticStrain);
+    const stress = stressFromCubic(strain);
+    if (!Number.isFinite(stress)) {
       return;
     }
-    const fittedStress = pair.stress;
-    const rawPlasticStrain = pair.strain - fittedStress / modulusValue;
-    const plasticStrain = rawPlasticStrain - basePlasticStrain;
-    lines.push(`${plasticStrain.toFixed(6)},${fittedStress.toFixed(2)}`);
+    lines.push(`${plasticStrain.toFixed(6)},${stress.toFixed(2)}`);
   });
 
   return [header, ...lines].join("\n");

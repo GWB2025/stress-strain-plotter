@@ -55,7 +55,7 @@ Rules:
 For plastic-region export:
 
 - Enter Elastic modulus E (same units as stress).
-- Set a strain step to generate evenly spaced true strain values.
+- Set a strain step to generate evenly spaced true plastic strain values.
 - The app computes true stress via the cubic fit and plastic strain via:
 
   plastic_strain = true_strain - true_stress / E
