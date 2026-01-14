@@ -405,10 +405,6 @@ button:disabled {
   box-shadow: none;
 }
 
-.legend .dot.theoretical {
-  background: #2e6bd9;
-  box-shadow: 0 0 10px rgba(46, 107, 217, 0.4);
-}
 
 .chart-shell {
   background: #f6efe6;
