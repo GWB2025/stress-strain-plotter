@@ -136,6 +136,7 @@ let referenceLoaded = false;
 let regionFitMode = "default";
 let lastAutoFillKey = null;
 let lastPowerDataset = null;
+let powerDatasetDirty = false;
 
 const referenceDataset = {
   name: "Al2024-T351",
@@ -1617,6 +1618,13 @@ function refreshFromSource() {
 
 stressUnitSelect.addEventListener("change", () => {
   refreshFromSource();
+  if (lastPowerDataset && lastPowerDataset.rows && lastPowerDataset.rows.length > 0) {
+    renderPowerDatasetChart(
+      lastPowerDataset.rows,
+      lastPowerDataset.unit || stressUnitSelect.value,
+    );
+  }
+  updatePowerSummaryAndBadges();
 });
 
 showTrueCheckbox.addEventListener("change", () => {
@@ -1667,6 +1675,29 @@ plasticStrainStepInput.addEventListener("change", () => {
   }
 });
 
+const powerInputFields = [
+  powerYieldInput,
+  powerModulusInput,
+  powerUtsInput,
+  powerCoeffInput,
+  powerExponentInput,
+  powerPointsInput,
+].filter(Boolean);
+
+powerInputFields.forEach((field) => {
+  field.addEventListener("input", () => {
+    markPowerDatasetDirty();
+  });
+});
+
+if (powerSpacingInputs && powerSpacingInputs.length > 0) {
+  powerSpacingInputs.forEach((input) => {
+    input.addEventListener("change", () => {
+      markPowerDatasetDirty();
+    });
+  });
+}
+
 loadPowerRowBtn.addEventListener("click", () => {
   const text = powerRowInput ? powerRowInput.value.trim() : "";
   const parsed = parsePowerRowInput(text);
@@ -1682,6 +1713,8 @@ loadPowerRowBtn.addEventListener("click", () => {
   const suffix = parsed.ignoredPoisson ? " Poisson ignored." : "";
   const label = parsed.material ? `Loaded ${parsed.material}.` : "Row loaded.";
   setPowerOutputStatus(`${label}${suffix}`);
+  powerDatasetDirty = true;
+  updatePowerSummaryAndBadges();
 });
 
 buildPowerBtn.addEventListener("click", () => {
@@ -1697,27 +1730,35 @@ buildPowerBtn.addEventListener("click", () => {
     return;
   }
   lastPowerDataset = result;
+  powerDatasetDirty = false;
   powerOutput.value = result.csv;
   const spacingLabel = inputs.spacing === "strain" ? "even strain" : "even stress";
   setPowerOutputStatus(`Generated ${result.count} points (${spacingLabel}).`);
-  renderPowerDatasetChart(result.rows, stressUnit);
-  const summaryInputs = `Yield=${inputs.yieldStress}, E=${inputs.modulus}, UTS=${inputs.uts}, H=${inputs.hardening}, n=${inputs.exponent}, p=${inputs.points} (${spacingLabel})`;
-  const strains = result.rows.map((row) => row.strain);
-  const stresses = result.rows.map((row) => row.stress);
-  const rangeText = `Range: strain ${Math.min(...strains).toFixed(6)}-${Math.max(...strains).toFixed(6)}, stress ${Math.min(...stresses).toFixed(2)}-${Math.max(...stresses).toFixed(2)} ${stressUnit}`;
-  setPowerSummary(summaryInputs, rangeText);
-  setPowerBadges(evaluatePowerDataset(result.rows));
+  renderPowerDatasetChart(result.rows, result.unit);
+  updatePowerSummaryAndBadges();
 });
 
 plotPowerBtn.addEventListener("click", () => {
-  if (!lastPowerDataset || !lastPowerDataset.rows || lastPowerDataset.rows.length < 2) {
-    const content = powerOutput.value.trim();
+  const content = powerOutput.value.trim();
+  const canUseCached =
+    lastPowerDataset &&
+    !powerDatasetDirty &&
+    lastPowerDataset.rows &&
+    lastPowerDataset.rows.length >= 2 &&
+    lastPowerDataset.csv &&
+    content &&
+    content === lastPowerDataset.csv.trim();
+
+  let formatted = "";
+  if (canUseCached) {
+    formatted = lastPowerDataset.rows.map((row) => `${row.strain},${row.stress}`).join("\n");
+  } else {
     if (!content) {
       setFeedback("Build the dataset first.");
       return;
     }
     const lines = content.split(/\r?\n/).slice(1);
-    const formatted = lines
+    formatted = lines
       .map((line) => line.trim())
       .filter((line) => line.length > 0)
       .map((line) => {
@@ -1730,24 +1771,7 @@ plotPowerBtn.addEventListener("click", () => {
       setFeedback("Dataset does not contain valid points.");
       return;
     }
-
-    hasHeaderCheckbox.checked = false;
-    stressRangeActive = false;
-    lineRangeActive = false;
-    elasticLineOverride = null;
-    elasticRangeOverride = null;
-    regionFitMode = "default";
-    rawData = formatted;
-    input.value = formatted;
-    plotFromRaw(formatted);
-    updateControlsState();
-    setFeedback("Loaded generated dataset into the plot.");
-    return;
   }
-
-  const formatted = lastPowerDataset.rows
-    .map((row) => `${row.strain},${row.stress}`)
-    .join("\n");
 
   hasHeaderCheckbox.checked = false;
   stressRangeActive = false;
@@ -1784,9 +1808,18 @@ savePowerPlotBtn.addEventListener("click", () => {
     setFeedback("Build the dataset first.");
     return;
   }
-  const stressUnit = stressUnitSelect.value;
-  const content = buildPowerPlotCsv(lastPowerDataset.rows, stressUnit);
-  const blob = new Blob([`${content}\n`], { type: "text/csv;charset=utf-8" });
+  if (powerDatasetDirty) {
+    setFeedback("Rebuild the dataset before exporting plot-ready CSV.");
+    return;
+  }
+  const content = powerOutput.value.trim();
+  if (!content || !lastPowerDataset.csv || content !== lastPowerDataset.csv.trim()) {
+    setFeedback("Plot-ready export requires the latest built dataset.");
+    return;
+  }
+  const stressUnit = lastPowerDataset.unit || stressUnitSelect.value;
+  const contentToSave = buildPowerPlotCsv(lastPowerDataset.rows, stressUnit);
+  const blob = new Blob([`${contentToSave}\n`], { type: "text/csv;charset=utf-8" });
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
   link.download = "power_hardening_plot.csv";
@@ -2193,6 +2226,7 @@ resetBtn.addEventListener("click", () => {
     });
   }
   lastPowerDataset = null;
+  powerDatasetDirty = false;
   rawData = "";
   referenceLoaded = false;
   hardeningWarningMode = "silent";
@@ -2405,12 +2439,16 @@ function setPowerSummary(inputsText, rangeText) {
   }
 }
 
-function setPowerBadges(badges) {
+function setPowerBadges(badges, options = {}) {
   if (!powerSummaryBadges) {
     return;
   }
   powerSummaryBadges.innerHTML = "";
+  const showOk = options.showOk === true;
   if (!badges || badges.length === 0) {
+    if (!showOk) {
+      return;
+    }
     const tag = document.createElement("span");
     tag.className = "badge ok";
     tag.textContent = "OK";
@@ -2431,6 +2469,17 @@ function getPowerSpacing() {
   }
   const checked = Array.from(powerSpacingInputs).find((input) => input.checked);
   return checked ? checked.value : "stress";
+}
+
+function getPowerInputSummary() {
+  const yieldText = powerYieldInput?.value.trim() || "--";
+  const modulusText = powerModulusInput?.value.trim() || "--";
+  const utsText = powerUtsInput?.value.trim() || "--";
+  const hardeningText = powerCoeffInput?.value.trim() || "--";
+  const exponentText = powerExponentInput?.value.trim() || "--";
+  const pointsText = powerPointsInput?.value.trim() || "--";
+  const spacingLabel = getPowerSpacing() === "strain" ? "even strain" : "even stress";
+  return `Yield=${yieldText}, E=${modulusText}, UTS=${utsText}, H=${hardeningText}, n=${exponentText}, p=${pointsText} (${spacingLabel})`;
 }
 
 function readRequiredNumber(input, label, options = {}) {
@@ -2626,6 +2675,7 @@ function buildPowerDataset(params, stressUnit) {
     count: rows.length,
     pairs: rows.map((row) => ({ x: row.strain, y: row.stress })),
     rows,
+    unit: stressUnit,
   };
 }
 
@@ -2680,6 +2730,51 @@ function evaluatePowerDataset(rows) {
   return badges;
 }
 
+function buildPowerBadges(rows, options = {}) {
+  const badges = [];
+  if (options.dirty) {
+    badges.push({ label: "Needs rebuild", type: "warning" });
+    return badges;
+  }
+  if (rows && rows.length > 0) {
+    badges.push(...evaluatePowerDataset(rows));
+  }
+  if (options.unitMismatch) {
+    badges.push({ label: "Unit mismatch", type: "warning" });
+  }
+  return badges;
+}
+
+function updatePowerSummaryAndBadges() {
+  const inputsText = getPowerInputSummary();
+  let rangeText = "Range: --";
+  let unitMismatch = false;
+  let rows = null;
+  if (lastPowerDataset && lastPowerDataset.rows && lastPowerDataset.rows.length > 0 && !powerDatasetDirty) {
+    rows = lastPowerDataset.rows;
+    const strains = rows.map((row) => row.strain);
+    const stresses = rows.map((row) => row.stress);
+    const builtUnit = lastPowerDataset.unit || stressUnitSelect.value;
+    const selectorUnit = stressUnitSelect.value;
+    unitMismatch = selectorUnit !== builtUnit;
+    rangeText = `Range: strain ${Math.min(...strains).toFixed(6)}-${Math.max(...strains).toFixed(6)}, stress ${Math.min(...stresses).toFixed(2)}-${Math.max(...stresses).toFixed(2)} ${builtUnit}`;
+    if (unitMismatch) {
+      rangeText += ` (selector: ${selectorUnit})`;
+    }
+  }
+  setPowerSummary(inputsText, rangeText);
+  const badges = buildPowerBadges(rows, { dirty: powerDatasetDirty, unitMismatch });
+  const showOk = badges.length === 0 && !powerDatasetDirty && !unitMismatch && rows;
+  setPowerBadges(badges, { showOk });
+}
+
+function markPowerDatasetDirty() {
+  powerDatasetDirty = true;
+  const hasOutput = powerOutput && powerOutput.value.trim().length > 0;
+  setPowerOutputStatus(hasOutput ? "Inputs updated; rebuild dataset." : "Awaiting inputs...");
+  updatePowerSummaryAndBadges();
+}
+
 function parsePowerRowInput(text) {
   if (!text) {
     return { error: "Paste a workbook row to load." };
@@ -2699,20 +2794,15 @@ function parsePowerRowInput(text) {
   if (numbers.some((value) => !Number.isFinite(value))) {
     return { error: "Row contains non-numeric values in numeric columns." };
   }
-  if (numbers.length < 5) {
-    return { error: "Row must include Yield, E, UTS, H, and n values." };
+  if (numbers.length !== 5 && numbers.length !== 6) {
+    return { error: "Row must include Yield, E, UTS, H, and n (optionally Poisson)." };
   }
   const yieldStress = numbers[0];
   const modulus = numbers[1];
   const uts = numbers[2];
-  let remaining = numbers.slice(3);
-  let ignoredPoisson = false;
-  if (remaining.length >= 3 && remaining[0] > 0 && remaining[0] <= 0.5) {
-    ignoredPoisson = true;
-    remaining = remaining.slice(1);
-  }
-  const hardening = remaining[0];
-  const exponent = remaining[1];
+  const ignoredPoisson = numbers.length === 6;
+  const hardening = numbers[ignoredPoisson ? 4 : 3];
+  const exponent = numbers[ignoredPoisson ? 5 : 4];
   if (!Number.isFinite(hardening) || !Number.isFinite(exponent)) {
     return { error: "Row must include hardening coefficient and exponent." };
   }

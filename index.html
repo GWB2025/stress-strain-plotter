@@ -195,13 +195,13 @@
                 Even plastic strain
               </label>
             </div>
-            <label for="powerRowInput" title="Paste a workbook row (Material, Yield, E, UTS, Poisson, H, n).">Load from workbook row</label>
+            <label for="powerRowInput" title="Paste a workbook row (Material, Yield, E, UTS, H, n).">Load from workbook row</label>
             <div class="row-input">
               <input
                 id="powerRowInput"
                 type="text"
-                placeholder="Al7075-T6, 469, 71000, 578, 0.33, 827, 0.113"
-                title="Paste a row with Yield, E, UTS, (optional Poisson), H, n."
+                placeholder="Al7075-T6, 469, 71000, 578, 827, 0.113"
+                title="Paste a row with Yield, E, UTS, H, n. If Poisson is present, it will be ignored."
               />
               <button id="loadPowerRowBtn" class="ghost" title="Fill inputs from the pasted row.">Load row</button>
             </div>
