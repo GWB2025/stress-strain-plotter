@@ -28,15 +28,21 @@ const savePlasticBtn = document.querySelector("#savePlasticBtn");
 const powerYieldInput = document.querySelector("#powerYieldInput");
 const powerModulusInput = document.querySelector("#powerModulusInput");
 const powerUtsInput = document.querySelector("#powerUtsInput");
-const powerPoissonInput = document.querySelector("#powerPoissonInput");
 const powerCoeffInput = document.querySelector("#powerCoeffInput");
 const powerExponentInput = document.querySelector("#powerExponentInput");
 const powerPointsInput = document.querySelector("#powerPointsInput");
+const powerSpacingInputs = document.querySelectorAll('input[name="powerSpacing"]');
+const powerRowInput = document.querySelector("#powerRowInput");
+const loadPowerRowBtn = document.querySelector("#loadPowerRowBtn");
+const powerSummaryInputs = document.querySelector("#powerSummaryInputs");
+const powerSummaryRange = document.querySelector("#powerSummaryRange");
+const powerSummaryBadges = document.querySelector("#powerSummaryBadges");
 const powerOutput = document.querySelector("#powerOutput");
 const powerOutputStatus = document.querySelector("#powerOutputStatus");
 const buildPowerBtn = document.querySelector("#buildPowerBtn");
 const plotPowerBtn = document.querySelector("#plotPowerBtn");
 const savePowerBtn = document.querySelector("#savePowerBtn");
+const savePowerPlotBtn = document.querySelector("#savePowerPlotBtn");
 const powerGrid = document.querySelector("#powerGrid");
 const powerAxes = document.querySelector("#powerAxes");
 const powerCurveStrain = document.querySelector("#powerCurveStrain");
@@ -1661,6 +1667,23 @@ plasticStrainStepInput.addEventListener("change", () => {
   }
 });
 
+loadPowerRowBtn.addEventListener("click", () => {
+  const text = powerRowInput ? powerRowInput.value.trim() : "";
+  const parsed = parsePowerRowInput(text);
+  if (parsed.error) {
+    setFeedback(parsed.error);
+    return;
+  }
+  powerYieldInput.value = formatInputValue(parsed.yieldStress, 2);
+  powerModulusInput.value = formatInputValue(parsed.modulus, 2);
+  powerUtsInput.value = formatInputValue(parsed.uts, 2);
+  powerCoeffInput.value = formatInputValue(parsed.hardening, 2);
+  powerExponentInput.value = formatInputValue(parsed.exponent, 4);
+  const suffix = parsed.ignoredPoisson ? " Poisson ignored." : "";
+  const label = parsed.material ? `Loaded ${parsed.material}.` : "Row loaded.";
+  setPowerOutputStatus(`${label}${suffix}`);
+});
+
 buildPowerBtn.addEventListener("click", () => {
   const inputs = readPowerDatasetInputs();
   if (inputs.error) {
@@ -1675,30 +1698,56 @@ buildPowerBtn.addEventListener("click", () => {
   }
   lastPowerDataset = result;
   powerOutput.value = result.csv;
-  setPowerOutputStatus(`Generated ${result.count} points.`);
+  const spacingLabel = inputs.spacing === "strain" ? "even strain" : "even stress";
+  setPowerOutputStatus(`Generated ${result.count} points (${spacingLabel}).`);
   renderPowerDatasetChart(result.rows, stressUnit);
+  const summaryInputs = `Yield=${inputs.yieldStress}, E=${inputs.modulus}, UTS=${inputs.uts}, H=${inputs.hardening}, n=${inputs.exponent}, p=${inputs.points} (${spacingLabel})`;
+  const strains = result.rows.map((row) => row.strain);
+  const stresses = result.rows.map((row) => row.stress);
+  const rangeText = `Range: strain ${Math.min(...strains).toFixed(6)}-${Math.max(...strains).toFixed(6)}, stress ${Math.min(...stresses).toFixed(2)}-${Math.max(...stresses).toFixed(2)} ${stressUnit}`;
+  setPowerSummary(summaryInputs, rangeText);
+  setPowerBadges(evaluatePowerDataset(result.rows));
 });
 
 plotPowerBtn.addEventListener("click", () => {
-  const content = powerOutput.value.trim();
-  if (!content) {
-    setFeedback("Build the dataset first.");
-    return;
-  }
-  const lines = content.split(/\r?\n/).slice(1);
-  const formatted = lines
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .map((line) => {
-      const [strain, stress] = line.split(",");
-      return `${strain},${stress}`;
-    })
-    .join("\n");
+  if (!lastPowerDataset || !lastPowerDataset.rows || lastPowerDataset.rows.length < 2) {
+    const content = powerOutput.value.trim();
+    if (!content) {
+      setFeedback("Build the dataset first.");
+      return;
+    }
+    const lines = content.split(/\r?\n/).slice(1);
+    const formatted = lines
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .map((line) => {
+        const [strain, stress] = line.split(",");
+        return `${strain},${stress}`;
+      })
+      .join("\n");
 
-  if (!formatted) {
-    setFeedback("Dataset does not contain valid points.");
+    if (!formatted) {
+      setFeedback("Dataset does not contain valid points.");
+      return;
+    }
+
+    hasHeaderCheckbox.checked = false;
+    stressRangeActive = false;
+    lineRangeActive = false;
+    elasticLineOverride = null;
+    elasticRangeOverride = null;
+    regionFitMode = "default";
+    rawData = formatted;
+    input.value = formatted;
+    plotFromRaw(formatted);
+    updateControlsState();
+    setFeedback("Loaded generated dataset into the plot.");
     return;
   }
+
+  const formatted = lastPowerDataset.rows
+    .map((row) => `${row.strain},${row.stress}`)
+    .join("\n");
 
   hasHeaderCheckbox.checked = false;
   stressRangeActive = false;
@@ -1722,12 +1771,30 @@ savePowerBtn.addEventListener("click", () => {
   const blob = new Blob([`${content}\n`], { type: "text/csv;charset=utf-8" });
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
-  link.download = "power_hardening_dataset.csv";
+  link.download = "power_hardening_ansys.csv";
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(link.href);
-  setFeedback("Saved power hardening dataset.");
+  setFeedback("Saved ANSYS dataset.");
+});
+
+savePowerPlotBtn.addEventListener("click", () => {
+  if (!lastPowerDataset || !lastPowerDataset.rows || lastPowerDataset.rows.length === 0) {
+    setFeedback("Build the dataset first.");
+    return;
+  }
+  const stressUnit = stressUnitSelect.value;
+  const content = buildPowerPlotCsv(lastPowerDataset.rows, stressUnit);
+  const blob = new Blob([`${content}\n`], { type: "text/csv;charset=utf-8" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = "power_hardening_plot.csv";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(link.href);
+  setFeedback("Saved plot-ready CSV.");
 });
 
 applyRangeBtn.addEventListener("click", () => {
@@ -2108,9 +2175,6 @@ resetBtn.addEventListener("click", () => {
   if (powerUtsInput) {
     powerUtsInput.value = "";
   }
-  if (powerPoissonInput) {
-    powerPoissonInput.value = "";
-  }
   if (powerCoeffInput) {
     powerCoeffInput.value = "";
   }
@@ -2119,6 +2183,14 @@ resetBtn.addEventListener("click", () => {
   }
   if (powerPointsInput) {
     powerPointsInput.value = "13";
+  }
+  if (powerRowInput) {
+    powerRowInput.value = "";
+  }
+  if (powerSpacingInputs && powerSpacingInputs.length > 0) {
+    powerSpacingInputs.forEach((input) => {
+      input.checked = input.value === "stress";
+    });
   }
   lastPowerDataset = null;
   rawData = "";
@@ -2153,6 +2225,8 @@ resetBtn.addEventListener("click", () => {
     powerOutput.value = "";
   }
   setPowerOutputStatus("Awaiting inputs...");
+  setPowerSummary("Awaiting inputs...", "Range: --");
+  setPowerBadges([]);
   clearPowerChart();
   renderDataTable([]);
   renderDataPlot([]);
@@ -2322,6 +2396,43 @@ function setPowerOutputStatus(message) {
   }
 }
 
+function setPowerSummary(inputsText, rangeText) {
+  if (powerSummaryInputs) {
+    powerSummaryInputs.textContent = inputsText;
+  }
+  if (powerSummaryRange) {
+    powerSummaryRange.textContent = rangeText;
+  }
+}
+
+function setPowerBadges(badges) {
+  if (!powerSummaryBadges) {
+    return;
+  }
+  powerSummaryBadges.innerHTML = "";
+  if (!badges || badges.length === 0) {
+    const tag = document.createElement("span");
+    tag.className = "badge ok";
+    tag.textContent = "OK";
+    powerSummaryBadges.appendChild(tag);
+    return;
+  }
+  badges.forEach((badge) => {
+    const tag = document.createElement("span");
+    tag.className = `badge ${badge.type || "warning"}`;
+    tag.textContent = badge.label;
+    powerSummaryBadges.appendChild(tag);
+  });
+}
+
+function getPowerSpacing() {
+  if (!powerSpacingInputs || powerSpacingInputs.length === 0) {
+    return "stress";
+  }
+  const checked = Array.from(powerSpacingInputs).find((input) => input.checked);
+  return checked ? checked.value : "stress";
+}
+
 function readRequiredNumber(input, label, options = {}) {
   if (!input) {
     return { error: `${label} input not available.` };
@@ -2363,13 +2474,6 @@ function readPowerDatasetInputs() {
   if (utsCheck.error) {
     return { error: utsCheck.error };
   }
-  const poissonCheck = readRequiredNumber(powerPoissonInput, "Poisson's ratio", {
-    min: 0,
-    max: 0.5,
-  });
-  if (poissonCheck.error) {
-    return { error: poissonCheck.error };
-  }
   const coeffCheck = readRequiredNumber(powerCoeffInput, "Hardening coefficient H", {
     minExclusive: 0,
   });
@@ -2410,11 +2514,61 @@ function readPowerDatasetInputs() {
     yieldStress: yieldCheck.value,
     modulus: modulusCheck.value,
     uts: utsCheck.value,
-    poisson: poissonCheck.value,
     hardening: coeffCheck.value,
     exponent: exponentCheck.value,
     points,
+    spacing: getPowerSpacing(),
   };
+}
+
+function computePowerPoint(sigma, params) {
+  const epsilon = Math.pow(sigma / params.hardening, 1 / params.exponent);
+  const strain = epsilon - sigma / params.modulus;
+  if (!Number.isFinite(epsilon) || !Number.isFinite(strain)) {
+    return null;
+  }
+  return { epsilon, strain, stress: sigma };
+}
+
+function solveSigmaForStrain(targetStrain, params, low, high) {
+  const f = (sigma) => {
+    const point = computePowerPoint(sigma, params);
+    return point ? point.strain - targetStrain : null;
+  };
+  let fLow = f(low);
+  let fHigh = f(high);
+  if (fLow === null || fHigh === null) {
+    return null;
+  }
+  if (fLow === 0) {
+    return low;
+  }
+  if (fHigh === 0) {
+    return high;
+  }
+  if (fLow * fHigh > 0) {
+    return null;
+  }
+  let left = low;
+  let right = high;
+  for (let i = 0; i < 80; i += 1) {
+    const mid = (left + right) / 2;
+    const fMid = f(mid);
+    if (fMid === null) {
+      return null;
+    }
+    if (Math.abs(fMid) < 1e-10) {
+      return mid;
+    }
+    if (fLow * fMid <= 0) {
+      right = mid;
+      fHigh = fMid;
+    } else {
+      left = mid;
+      fLow = fMid;
+    }
+  }
+  return (left + right) / 2;
 }
 
 function buildPowerDataset(params, stressUnit) {
@@ -2423,14 +2577,43 @@ function buildPowerDataset(params, stressUnit) {
   const span = params.uts - params.yieldStress;
   const denom = params.points - 1;
 
-  for (let i = 0; i < params.points; i += 1) {
-    const sigma = params.yieldStress + (span * i) / denom;
-    const eps = Math.pow(sigma / params.hardening, 1 / params.exponent);
-    const strain = eps - sigma / params.modulus;
-    if (!Number.isFinite(eps) || !Number.isFinite(strain)) {
+  if (params.spacing === "strain") {
+    const yieldPoint = computePowerPoint(params.yieldStress, params);
+    const utsPoint = computePowerPoint(params.uts, params);
+    if (!yieldPoint || !utsPoint) {
       return { error: "Computed strain is not finite. Check H and n values." };
     }
-    rows.push({ epsilon: eps, strain, stress: sigma });
+    if (utsPoint.strain <= yieldPoint.strain) {
+      return { error: "Plastic strain range is not increasing. Check inputs." };
+    }
+    for (let i = 0; i < params.points; i += 1) {
+      const ratio = denom === 0 ? 0 : i / denom;
+      const targetStrain =
+        yieldPoint.strain + (utsPoint.strain - yieldPoint.strain) * ratio;
+      const sigma = solveSigmaForStrain(
+        targetStrain,
+        params,
+        params.yieldStress,
+        params.uts,
+      );
+      if (sigma === null) {
+        return { error: "Unable to solve stress values for even strain spacing." };
+      }
+      const point = computePowerPoint(sigma, params);
+      if (!point) {
+        return { error: "Computed strain is not finite. Check H and n values." };
+      }
+      rows.push(point);
+    }
+  } else {
+    for (let i = 0; i < params.points; i += 1) {
+      const sigma = params.yieldStress + (span * i) / denom;
+      const point = computePowerPoint(sigma, params);
+      if (!point) {
+        return { error: "Computed strain is not finite. Check H and n values." };
+      }
+      rows.push(point);
+    }
   }
 
   const header = `Plastic strain for Ansys input,stress (${stressUnit})`;
@@ -2443,6 +2626,104 @@ function buildPowerDataset(params, stressUnit) {
     count: rows.length,
     pairs: rows.map((row) => ({ x: row.strain, y: row.stress })),
     rows,
+  };
+}
+
+function buildPowerPlotCsv(rows, stressUnit) {
+  const header = `epsilon,plastic_strain,stress (${stressUnit})`;
+  const lines = rows.map(
+    (row) =>
+      `${row.epsilon.toFixed(6)},${row.strain.toFixed(6)},${row.stress.toFixed(2)}`,
+  );
+  return [header, ...lines].join("\n");
+}
+
+function evaluatePowerDataset(rows) {
+  const badges = [];
+  if (!rows || rows.length === 0) {
+    return badges;
+  }
+  let strainDecreases = false;
+  let stressDecreases = false;
+  let negativeStrain = false;
+  let nonFinite = false;
+  for (let i = 0; i < rows.length; i += 1) {
+    const row = rows[i];
+    if (!Number.isFinite(row.strain) || !Number.isFinite(row.stress)) {
+      nonFinite = true;
+      break;
+    }
+    if (row.strain < 0) {
+      negativeStrain = true;
+    }
+    if (i > 0) {
+      if (row.strain < rows[i - 1].strain) {
+        strainDecreases = true;
+      }
+      if (row.stress < rows[i - 1].stress) {
+        stressDecreases = true;
+      }
+    }
+  }
+  if (nonFinite) {
+    badges.push({ label: "Non-finite values", type: "warning" });
+  }
+  if (negativeStrain) {
+    badges.push({ label: "Negative strain", type: "warning" });
+  }
+  if (strainDecreases) {
+    badges.push({ label: "Strain not monotonic", type: "warning" });
+  }
+  if (stressDecreases) {
+    badges.push({ label: "Stress not monotonic", type: "warning" });
+  }
+  return badges;
+}
+
+function parsePowerRowInput(text) {
+  if (!text) {
+    return { error: "Paste a workbook row to load." };
+  }
+  const tokens = text
+    .split(/[\t,]+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0);
+  if (tokens.length === 0) {
+    return { error: "Paste a workbook row to load." };
+  }
+  let material = null;
+  if (Number.isNaN(Number(tokens[0]))) {
+    material = tokens.shift();
+  }
+  const numbers = tokens.map((token) => Number(token));
+  if (numbers.some((value) => !Number.isFinite(value))) {
+    return { error: "Row contains non-numeric values in numeric columns." };
+  }
+  if (numbers.length < 5) {
+    return { error: "Row must include Yield, E, UTS, H, and n values." };
+  }
+  const yieldStress = numbers[0];
+  const modulus = numbers[1];
+  const uts = numbers[2];
+  let remaining = numbers.slice(3);
+  let ignoredPoisson = false;
+  if (remaining.length >= 3 && remaining[0] > 0 && remaining[0] <= 0.5) {
+    ignoredPoisson = true;
+    remaining = remaining.slice(1);
+  }
+  const hardening = remaining[0];
+  const exponent = remaining[1];
+  if (!Number.isFinite(hardening) || !Number.isFinite(exponent)) {
+    return { error: "Row must include hardening coefficient and exponent." };
+  }
+  return {
+    material,
+    yieldStress,
+    modulus,
+    uts,
+    hardening,
+    exponent,
+    ignoredPoisson,
   };
 }
 
