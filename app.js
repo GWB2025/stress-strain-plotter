@@ -25,6 +25,22 @@ const elasticModulusInput = document.querySelector("#elasticModulusInput");
 const plasticStrainStepInput = document.querySelector("#plasticStrainStep");
 const plasticOutput = document.querySelector("#plasticOutput");
 const savePlasticBtn = document.querySelector("#savePlasticBtn");
+const powerYieldInput = document.querySelector("#powerYieldInput");
+const powerModulusInput = document.querySelector("#powerModulusInput");
+const powerUtsInput = document.querySelector("#powerUtsInput");
+const powerPoissonInput = document.querySelector("#powerPoissonInput");
+const powerCoeffInput = document.querySelector("#powerCoeffInput");
+const powerExponentInput = document.querySelector("#powerExponentInput");
+const powerPointsInput = document.querySelector("#powerPointsInput");
+const powerOutput = document.querySelector("#powerOutput");
+const powerOutputStatus = document.querySelector("#powerOutputStatus");
+const buildPowerBtn = document.querySelector("#buildPowerBtn");
+const plotPowerBtn = document.querySelector("#plotPowerBtn");
+const savePowerBtn = document.querySelector("#savePowerBtn");
+const powerGrid = document.querySelector("#powerGrid");
+const powerAxes = document.querySelector("#powerAxes");
+const powerCurveStrain = document.querySelector("#powerCurveStrain");
+const powerPoints = document.querySelector("#powerPoints");
 const dataTableBody = document.querySelector("#dataTableBody");
 const dataTableStatus = document.querySelector("#dataTableStatus");
 const dataPlotSelect = document.querySelector("#dataPlotSelect");
@@ -113,6 +129,7 @@ let hardeningWarningMode = "silent";
 let referenceLoaded = false;
 let regionFitMode = "default";
 let lastAutoFillKey = null;
+let lastPowerDataset = null;
 
 const referenceDataset = {
   name: "Al2024-T351",
@@ -261,6 +278,21 @@ function clearChart() {
   plasticPointsLayer.innerHTML = "";
   plasticCurve.setAttribute("points", "");
   plasticFit.setAttribute("points", "");
+}
+
+function clearPowerChart() {
+  if (powerGrid) {
+    powerGrid.innerHTML = "";
+  }
+  if (powerAxes) {
+    powerAxes.innerHTML = "";
+  }
+  if (powerCurveStrain) {
+    powerCurveStrain.setAttribute("points", "");
+  }
+  if (powerPoints) {
+    powerPoints.innerHTML = "";
+  }
 }
 
 function renderGrid(target, xTicks, yTicks, box) {
@@ -1629,6 +1661,75 @@ plasticStrainStepInput.addEventListener("change", () => {
   }
 });
 
+buildPowerBtn.addEventListener("click", () => {
+  const inputs = readPowerDatasetInputs();
+  if (inputs.error) {
+    setFeedback(inputs.error);
+    return;
+  }
+  const stressUnit = stressUnitSelect.value;
+  const result = buildPowerDataset(inputs, stressUnit);
+  if (result.error) {
+    setFeedback(result.error);
+    return;
+  }
+  lastPowerDataset = result;
+  powerOutput.value = result.csv;
+  setPowerOutputStatus(`Generated ${result.count} points.`);
+  renderPowerDatasetChart(result.rows, stressUnit);
+});
+
+plotPowerBtn.addEventListener("click", () => {
+  const content = powerOutput.value.trim();
+  if (!content) {
+    setFeedback("Build the dataset first.");
+    return;
+  }
+  const lines = content.split(/\r?\n/).slice(1);
+  const formatted = lines
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      const [strain, stress] = line.split(",");
+      return `${strain},${stress}`;
+    })
+    .join("\n");
+
+  if (!formatted) {
+    setFeedback("Dataset does not contain valid points.");
+    return;
+  }
+
+  hasHeaderCheckbox.checked = false;
+  stressRangeActive = false;
+  lineRangeActive = false;
+  elasticLineOverride = null;
+  elasticRangeOverride = null;
+  regionFitMode = "default";
+  rawData = formatted;
+  input.value = formatted;
+  plotFromRaw(formatted);
+  updateControlsState();
+  setFeedback("Loaded generated dataset into the plot.");
+});
+
+savePowerBtn.addEventListener("click", () => {
+  const content = powerOutput.value.trim();
+  if (!content) {
+    setFeedback("No dataset to save.");
+    return;
+  }
+  const blob = new Blob([`${content}\n`], { type: "text/csv;charset=utf-8" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = "power_hardening_dataset.csv";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(link.href);
+  setFeedback("Saved power hardening dataset.");
+});
+
 applyRangeBtn.addEventListener("click", () => {
   stressRangeActive = true;
   lineRangeActive = false;
@@ -1998,6 +2099,28 @@ resetBtn.addEventListener("click", () => {
   lineToInput.value = "";
   elasticModulusInput.value = "";
   plasticStrainStepInput.value = "";
+  if (powerYieldInput) {
+    powerYieldInput.value = "";
+  }
+  if (powerModulusInput) {
+    powerModulusInput.value = "";
+  }
+  if (powerUtsInput) {
+    powerUtsInput.value = "";
+  }
+  if (powerPoissonInput) {
+    powerPoissonInput.value = "";
+  }
+  if (powerCoeffInput) {
+    powerCoeffInput.value = "";
+  }
+  if (powerExponentInput) {
+    powerExponentInput.value = "";
+  }
+  if (powerPointsInput) {
+    powerPointsInput.value = "13";
+  }
+  lastPowerDataset = null;
   rawData = "";
   referenceLoaded = false;
   hardeningWarningMode = "silent";
@@ -2026,6 +2149,11 @@ resetBtn.addEventListener("click", () => {
   plasticPanel.style.display = "none";
   plasticChartShell.style.display = "none";
   plasticOutput.value = "";
+  if (powerOutput) {
+    powerOutput.value = "";
+  }
+  setPowerOutputStatus("Awaiting inputs...");
+  clearPowerChart();
   renderDataTable([]);
   renderDataPlot([]);
   elasticSummary.textContent = "Awaiting fit segment...";
@@ -2186,6 +2314,176 @@ function formatInputValue(value, digits) {
     return "";
   }
   return value.toFixed(digits);
+}
+
+function setPowerOutputStatus(message) {
+  if (powerOutputStatus) {
+    powerOutputStatus.textContent = message;
+  }
+}
+
+function readRequiredNumber(input, label, options = {}) {
+  if (!input) {
+    return { error: `${label} input not available.` };
+  }
+  const raw = input.value.trim();
+  if (raw.length === 0) {
+    return { error: `${label} is required.` };
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value)) {
+    return { error: `${label} must be a number.` };
+  }
+  if (options.minExclusive !== undefined && value <= options.minExclusive) {
+    return { error: `${label} must be greater than ${options.minExclusive}.` };
+  }
+  if (options.min !== undefined && value < options.min) {
+    return { error: `${label} must be >= ${options.min}.` };
+  }
+  if (options.max !== undefined && value > options.max) {
+    return { error: `${label} must be <= ${options.max}.` };
+  }
+  return { value };
+}
+
+function readPowerDatasetInputs() {
+  const yieldCheck = readRequiredNumber(powerYieldInput, "Yield stress", {
+    minExclusive: 0,
+  });
+  if (yieldCheck.error) {
+    return { error: yieldCheck.error };
+  }
+  const modulusCheck = readRequiredNumber(powerModulusInput, "Young's modulus E", {
+    minExclusive: 0,
+  });
+  if (modulusCheck.error) {
+    return { error: modulusCheck.error };
+  }
+  const utsCheck = readRequiredNumber(powerUtsInput, "UTS", { minExclusive: 0 });
+  if (utsCheck.error) {
+    return { error: utsCheck.error };
+  }
+  const poissonCheck = readRequiredNumber(powerPoissonInput, "Poisson's ratio", {
+    min: 0,
+    max: 0.5,
+  });
+  if (poissonCheck.error) {
+    return { error: poissonCheck.error };
+  }
+  const coeffCheck = readRequiredNumber(powerCoeffInput, "Hardening coefficient H", {
+    minExclusive: 0,
+  });
+  if (coeffCheck.error) {
+    return { error: coeffCheck.error };
+  }
+  const exponentCheck = readRequiredNumber(powerExponentInput, "Hardening exponent n", {
+    minExclusive: 0,
+  });
+  if (exponentCheck.error) {
+    return { error: exponentCheck.error };
+  }
+
+  if (utsCheck.value <= yieldCheck.value) {
+    return { error: "UTS must be greater than yield stress." };
+  }
+
+  let points = 13;
+  if (powerPointsInput) {
+    const pointsRaw = powerPointsInput.value.trim();
+    if (pointsRaw.length > 0) {
+      const pointsValue = Number(pointsRaw);
+      if (!Number.isFinite(pointsValue)) {
+        return { error: "Points must be a number." };
+      }
+      points = Math.round(pointsValue);
+    }
+  }
+
+  if (points < 2) {
+    return { error: "Points must be at least 2." };
+  }
+  if (points > 5000) {
+    return { error: "Points must be 5000 or fewer." };
+  }
+
+  return {
+    yieldStress: yieldCheck.value,
+    modulus: modulusCheck.value,
+    uts: utsCheck.value,
+    poisson: poissonCheck.value,
+    hardening: coeffCheck.value,
+    exponent: exponentCheck.value,
+    points,
+  };
+}
+
+function buildPowerDataset(params, stressUnit) {
+  const rows = [];
+
+  const span = params.uts - params.yieldStress;
+  const denom = params.points - 1;
+
+  for (let i = 0; i < params.points; i += 1) {
+    const sigma = params.yieldStress + (span * i) / denom;
+    const eps = Math.pow(sigma / params.hardening, 1 / params.exponent);
+    const strain = eps - sigma / params.modulus;
+    if (!Number.isFinite(eps) || !Number.isFinite(strain)) {
+      return { error: "Computed strain is not finite. Check H and n values." };
+    }
+    rows.push({ epsilon: eps, strain, stress: sigma });
+  }
+
+  const header = `Plastic strain for Ansys input,stress (${stressUnit})`;
+  const lines = rows.map(
+    (row) => `${row.strain.toFixed(6)},${row.stress.toFixed(2)}`,
+  );
+
+  return {
+    csv: [header, ...lines].join("\n"),
+    count: rows.length,
+    pairs: rows.map((row) => ({ x: row.strain, y: row.stress })),
+    rows,
+  };
+}
+
+function renderPowerDatasetChart(rows, stressUnit) {
+  if (!powerGrid || !powerAxes || !powerCurveStrain || !powerPoints) {
+    return;
+  }
+  clearPowerChart();
+  if (!rows || rows.length < 2) {
+    return;
+  }
+
+  const strainPairs = rows.map((row) => ({ x: row.strain, y: row.stress }));
+  const xValues = strainPairs.map((pair) => pair.x);
+  const yValues = rows.map((row) => row.stress);
+
+  const xDomain = extent(xValues);
+  const yDomain = extent(yValues);
+  const xTicks = 4;
+  const yTicks = 4;
+
+  renderGrid(powerGrid, xTicks, yTicks, chartBox);
+  renderAxes(powerAxes, xDomain, yDomain, xTicks, yTicks, chartBox, {
+    x: "Plastic strain (ANSYS)",
+    y: `Stress (${stressUnit})`,
+  });
+
+  const strainScaled = renderPoints(strainPairs, xDomain, yDomain, chartBox);
+  powerCurveStrain.setAttribute(
+    "points",
+    strainScaled.map((point) => `${point.x},${point.y}`).join(" "),
+  );
+
+  strainScaled.forEach((point) => {
+    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    circle.setAttribute("cx", point.x);
+    circle.setAttribute("cy", point.y);
+    circle.setAttribute("r", 3);
+    circle.setAttribute("class", "point");
+    powerPoints.appendChild(circle);
+  });
 }
 
 function buildAutoFillKey(pairs) {

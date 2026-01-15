@@ -214,6 +214,21 @@ textarea.has-data {
   gap: 8px;
 }
 
+.power-legend {
+  margin-top: 8px;
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.plot-title {
+  margin: 10px 0 0;
+  font-size: 0.95rem;
+  color: var(--muted);
+}
+
 .plot-selector label {
   font-weight: 600;
   color: var(--muted);

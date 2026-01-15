@@ -133,6 +133,94 @@
             </div>
           </div>
 
+          <div class="file-block">
+            <label>Power hardening dataset (from inputs)</label>
+            <label for="powerYieldInput" title="Yield stress (same units as stress).">Yield stress (0.2%)</label>
+            <input
+              id="powerYieldInput"
+              type="number"
+              step="any"
+              placeholder="e.g. 469"
+              title="Yield stress (same units as stress)."
+            />
+            <label for="powerModulusInput" title="Young's modulus E (same units as stress).">Young's modulus E</label>
+            <input
+              id="powerModulusInput"
+              type="number"
+              step="any"
+              placeholder="e.g. 71000"
+              title="Young's modulus E (same units as stress)."
+            />
+            <label for="powerUtsInput" title="Ultimate tensile strength (same units as stress).">UTS</label>
+            <input
+              id="powerUtsInput"
+              type="number"
+              step="any"
+              placeholder="e.g. 578"
+              title="Ultimate tensile strength (same units as stress)."
+            />
+            <label for="powerPoissonInput" title="Poisson's ratio (dimensionless).">Poisson's ratio</label>
+            <input
+              id="powerPoissonInput"
+              type="number"
+              step="any"
+              min="0"
+              max="0.5"
+              placeholder="e.g. 0.33"
+              title="Poisson's ratio (dimensionless)."
+            />
+            <label for="powerCoeffInput" title="Hardening coefficient H (same units as stress).">Hardening coefficient H</label>
+            <input
+              id="powerCoeffInput"
+              type="number"
+              step="any"
+              placeholder="e.g. 827"
+              title="Hardening coefficient H (same units as stress)."
+            />
+            <label for="powerExponentInput" title="Hardening exponent n.">Hardening exponent n</label>
+            <input
+              id="powerExponentInput"
+              type="number"
+              step="any"
+              placeholder="e.g. 0.113"
+              title="Hardening exponent n."
+            />
+            <label for="powerPointsInput" title="Number of points between yield and UTS.">Points (p)</label>
+            <input
+              id="powerPointsInput"
+              type="number"
+              step="1"
+              min="2"
+              value="13"
+              title="Number of points between yield and UTS."
+            />
+            <div class="range-actions">
+              <button id="buildPowerBtn" class="ghost" title="Generate the power hardening dataset.">Build dataset</button>
+              <button id="plotPowerBtn" class="ghost" title="Use the generated dataset as the main plot data.">Plot dataset</button>
+              <button id="savePowerBtn" class="ghost" title="Save the generated dataset to a CSV file.">Save dataset CSV</button>
+            </div>
+            <textarea
+              id="powerOutput"
+              rows="6"
+              readonly
+              title="Power hardening dataset output."
+            ></textarea>
+            <h4 class="plot-title">Stressstrain curve estimated by power hardening</h4>
+            <div class="chart-shell">
+              <svg id="powerChart" viewBox="0 0 640 400" role="img" aria-label="Power hardening dataset chart">
+                <rect x="0" y="0" width="640" height="400" class="chart-bg" />
+                <g id="powerGrid"></g>
+                <g id="powerAxes"></g>
+                <polyline id="powerCurveStrain" fill="none" stroke="#1d1a12" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+                <g id="powerPoints"></g>
+              </svg>
+            </div>
+            <p id="powerOutputStatus" class="file-helper">Awaiting inputs...</p>
+            <p class="file-helper">
+              Output columns: Plastic strain for Ansys input, stress. Uses eps = (sigma/H)^(1/n) and strain = eps - sigma/E.
+            </p>
+          </div>
+
           <label for="dataInput" title="Edit or paste strain, stress data here.">Stress-strain data (comma or tab separated)</label>
           <textarea
             id="dataInput"
@@ -327,6 +415,6 @@
       </main>
     </div>
 
-    <script src="app.js?v=64"></script>
+    <script src="app.js?v=65"></script>
   </body>
 </html>
