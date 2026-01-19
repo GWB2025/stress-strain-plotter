@@ -283,6 +283,10 @@ textarea.has-data {
   z-index: 20;
 }
 
+.summary-panel[hidden] {
+  display: none !important;
+}
+
 .summary-card {
   width: min(720px, 100%);
   background: #fffaf1;

@@ -75,6 +75,9 @@ const summaryPanel = document.querySelector("#summaryPanel");
 const summaryOutput = document.querySelector("#summaryOutput");
 const copySummaryBtn = document.querySelector("#copySummaryBtn");
 const closeSummaryBtn = document.querySelector("#closeSummaryBtn");
+if (summaryPanel) {
+  summaryPanel.hidden = true;
+}
 const modulus = document.querySelector("#modulus");
 const yieldPointText = document.querySelector("#yieldPointText");
 const yieldPointTop = document.querySelector("#yieldPointTop");
