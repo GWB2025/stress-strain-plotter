@@ -11,6 +11,14 @@ const selectAllRangeBtn = document.querySelector("#selectAllRangeBtn");
 const selectYieldRangeBtn = document.querySelector("#selectYieldRangeBtn");
 const selectUtsRangeBtn = document.querySelector("#selectUtsRangeBtn");
 const selectPlasticRangeBtn = document.querySelector("#selectPlasticRangeBtn");
+const strainMinInput = document.querySelector("#strainMin");
+const strainMaxInput = document.querySelector("#strainMax");
+const applyStrainRangeBtn = document.querySelector("#applyStrainRangeBtn");
+const clearStrainRangeBtn = document.querySelector("#clearStrainRangeBtn");
+const selectAllStrainRangeBtn = document.querySelector("#selectAllStrainRangeBtn");
+const selectYieldStrainRangeBtn = document.querySelector("#selectYieldStrainRangeBtn");
+const selectUtsStrainRangeBtn = document.querySelector("#selectUtsStrainRangeBtn");
+const selectPlasticStrainRangeBtn = document.querySelector("#selectPlasticStrainRangeBtn");
 const lineFromInput = document.querySelector("#lineFrom");
 const lineToInput = document.querySelector("#lineTo");
 const applyLineRangeBtn = document.querySelector("#applyLineRangeBtn");
@@ -67,6 +75,7 @@ const yieldPointText = document.querySelector("#yieldPointText");
 const yieldPointTop = document.querySelector("#yieldPointTop");
 const utsText = document.querySelector("#utsText");
 const utsTop = document.querySelector("#utsTop");
+const tangentText = document.querySelector("#tangentText");
 const hardeningText = document.querySelector("#hardeningText");
 const hardeningPanel = document.querySelector("#hardeningPanel");
 const hardeningChartShell = document.querySelector("#hardeningChartShell");
@@ -118,7 +127,6 @@ const modulusConfig = {
   maxElasticStrain: 0.01,
   minWindow: 20,
   maxWindow: 80,
-  minR2: 0.995,
 };
 
 const selectionConfig = {
@@ -126,9 +134,11 @@ const selectionConfig = {
 };
 
 let elasticRangeOverride = null;
+let elasticRangeAxis = null;
 let elasticLineOverride = null;
 let rawData = "";
 let stressRangeActive = false;
+let strainRangeActive = false;
 let lineRangeActive = false;
 let lastPopupMessage = "";
 let hardeningWarningMode = "silent";
@@ -550,9 +560,15 @@ function renderChart(pairs, overridePairs, shouldAutoFill) {
     const utsLabel = `UTS: ${metrics.uts.toFixed(2)} ${stressUnit}`;
     utsText.textContent = utsLabel;
     utsTop.textContent = utsLabel;
+    if (metrics.tangentModulus !== null) {
+      tangentText.textContent = `Tangent modulus: ${metrics.tangentModulus.toFixed(2)} ${stressUnit}`;
+    } else {
+      tangentText.textContent = "Tangent modulus: --";
+    }
   } else {
     utsText.textContent = "UTS: --";
     utsTop.textContent = "UTS: --";
+    tangentText.textContent = "Tangent modulus: --";
   }
 
   if (hardeningAllowed && hardening && hardening.K !== null && hardening.n !== null) {
@@ -751,14 +767,19 @@ function computeMetrics(pairs, fit) {
     toughness += dx * (sorted[i].y + sorted[i - 1].y) / 2;
   }
 
-  const uts = sorted.reduce((max, pair) => (pair.y > max ? pair.y : max), sorted[0].y);
+  const utsPair = sorted.reduce((max, pair) => (pair.y > max.y ? pair : max), sorted[0]);
+  const uts = utsPair.y;
   const fracture = sorted[sorted.length - 1];
 
   let yieldPoint = null;
   let resilience = null;
+  let tangentModulus = null;
   if (fit) {
     yieldPoint = estimateOffsetYield(sorted, fit);
     if (yieldPoint) {
+      if (utsPair && utsPair.x > yieldPoint.x) {
+        tangentModulus = (utsPair.y - yieldPoint.y) / (utsPair.x - yieldPoint.x);
+      }
       let area = 0;
       for (let i = 1; i < sorted.length; i += 1) {
         const left = sorted[i - 1];
@@ -780,7 +801,7 @@ function computeMetrics(pairs, fit) {
     }
   }
 
-  return { uts, fracture, toughness, resilience, yieldPoint };
+  return { uts, fracture, toughness, resilience, yieldPoint, tangentModulus };
 }
 
 function buildRegionFit(pairs) {
@@ -955,6 +976,8 @@ function renderElasticChart(modulusResult, useTrueData, truePairs, fitModel) {
       ? "manual"
       : modulusResult.mode === "fallback"
       ? "fallback"
+      : modulusResult.mode === "prefix"
+      ? "prefix"
       : "auto";
   if (fitR2 !== null) {
     const fitLabel = useTruePlastic ? "plastic" : modeLabel;
@@ -1432,25 +1455,14 @@ function estimateYoungsModulus(pairs, overridePairs) {
   const minWindow = Math.min(modulusConfig.minWindow, maxWindow);
 
   let best = null;
-  for (let windowSize = maxWindow; windowSize >= minWindow; windowSize -= 1) {
-    let bestForSize = null;
-    for (let start = 0; start <= elastic.length - windowSize; start += 1) {
-      const segment = elastic.slice(start, start + windowSize);
-      const fit = linearRegression(segment);
-      if (!fit) {
-        continue;
-      }
-
-      if (fit.r2 >= modulusConfig.minR2) {
-        if (!bestForSize || fit.r2 > bestForSize.r2) {
-          bestForSize = { ...fit, pairs: segment, windowSize };
-        }
-      }
+  for (let windowSize = minWindow; windowSize <= maxWindow; windowSize += 1) {
+    const segment = elastic.slice(0, windowSize);
+    const fit = linearRegression(segment);
+    if (!fit || !Number.isFinite(fit.r2)) {
+      continue;
     }
-
-    if (bestForSize) {
-      best = bestForSize;
-      break;
+    if (!best || fit.r2 > best.r2 + 1e-6 || (Math.abs(fit.r2 - best.r2) <= 1e-6 && windowSize > best.windowSize)) {
+      best = { ...fit, pairs: segment, windowSize };
     }
   }
 
@@ -1462,7 +1474,7 @@ function estimateYoungsModulus(pairs, overridePairs) {
     return { ...fallback, pairs: elastic, mode: "fallback" };
   }
 
-  return { ...best, mode: "auto" };
+  return { ...best, mode: "prefix" };
 }
 
 function linearRegression(pairs) {
@@ -1539,24 +1551,40 @@ function plotFromRaw(raw) {
     return;
   }
 
-  const range = readStressRange();
-  if (range.error) {
-    setFeedback(range.error);
+  const stressRange = readStressRange();
+  if (stressRange.error) {
+    setFeedback(stressRange.error);
+    renderDataTable([]);
+    renderDataPlot([]);
+    updateControlsState();
+    return;
+  }
+  const strainRange = readStrainRange();
+  if (strainRange.error) {
+    setFeedback(strainRange.error);
     renderDataTable([]);
     renderDataPlot([]);
     updateControlsState();
     return;
   }
 
-  const effectiveRange = lineRange.active ? { min: null, max: null } : range;
+  const rangeAxis =
+    !lineRange.active && strainRangeActive
+      ? "strain"
+      : !lineRange.active && stressRangeActive
+      ? "stress"
+      : null;
+  const selectedRange =
+    rangeAxis === "strain" ? strainRange : rangeAxis === "stress" ? stressRange : null;
+  const effectiveRange = lineRange.active || !selectedRange ? { min: null, max: null } : selectedRange;
   const autoFitRange =
-    !lineRange.active && range.min === null && range.max === null
+    !lineRange.active && !stressRangeActive && !strainRangeActive
       ? getAutoFitRange(result.pairs)
       : null;
-  updateDisplay(rawData, effectiveRange, lineRange, autoFitRange);
+  updateDisplay(rawData, effectiveRange, lineRange, autoFitRange, rangeAxis);
 
   const fullPairs = result.pairs;
-  const filtered = applyStressRange(fullPairs, effectiveRange);
+  const filtered = applyRange(fullPairs, effectiveRange, rangeAxis);
   if (filtered.error) {
     setFeedback(filtered.error);
     renderDataTable([]);
@@ -1566,7 +1594,7 @@ function plotFromRaw(raw) {
   }
 
   if (filtered.pairs.length < 2) {
-    setFeedback("Not enough points in the selected stress range.");
+    setFeedback("Not enough points in the selected range.");
     renderDataTable([]);
     renderDataPlot([]);
     updateControlsState();
@@ -1577,18 +1605,22 @@ function plotFromRaw(raw) {
 
   if (lineRange.active) {
     elasticRangeOverride = null;
+    elasticRangeAxis = null;
     elasticLineOverride = lineRange.pairs;
-  } else if (range.min !== null || range.max !== null) {
+  } else if (rangeAxis && (effectiveRange.min !== null || effectiveRange.max !== null)) {
     elasticLineOverride = null;
     if (filtered.pairs.length >= selectionConfig.minPoints) {
       elasticRangeOverride = filtered.pairs;
+      elasticRangeAxis = rangeAxis;
     } else {
       elasticRangeOverride = null;
+      elasticRangeAxis = null;
       warning = "Range has fewer than 10 points; fit uses auto-selection.";
     }
   } else {
     elasticLineOverride = null;
     elasticRangeOverride = null;
+    elasticRangeAxis = null;
   }
 
   setFeedback(warning);
@@ -1775,9 +1807,11 @@ plotPowerBtn.addEventListener("click", () => {
 
   hasHeaderCheckbox.checked = false;
   stressRangeActive = false;
+  strainRangeActive = false;
   lineRangeActive = false;
   elasticLineOverride = null;
   elasticRangeOverride = null;
+  elasticRangeAxis = null;
   regionFitMode = "default";
   rawData = formatted;
   input.value = formatted;
@@ -1832,8 +1866,10 @@ savePowerPlotBtn.addEventListener("click", () => {
 
 applyRangeBtn.addEventListener("click", () => {
   stressRangeActive = true;
+  strainRangeActive = false;
   lineRangeActive = false;
   elasticLineOverride = null;
+  elasticRangeAxis = null;
   regionFitMode = "default";
   hardeningWarningMode = "popup";
   const source = rawData || input.value;
@@ -1881,8 +1917,10 @@ selectAllRangeBtn.addEventListener("click", () => {
   stressMinInput.value = String(min);
   stressMaxInput.value = String(max);
   stressRangeActive = true;
+  strainRangeActive = false;
   lineRangeActive = false;
   elasticLineOverride = null;
+  elasticRangeAxis = null;
   regionFitMode = "default";
   hardeningWarningMode = "popup";
   setFeedback("Range inputs overridden to full data range.");
@@ -1908,8 +1946,10 @@ selectYieldRangeBtn.addEventListener("click", () => {
   stressMinInput.value = String(minStress(parsed.pairs));
   stressMaxInput.value = String(yieldPointData.y);
   stressRangeActive = true;
+  strainRangeActive = false;
   lineRangeActive = false;
   elasticLineOverride = null;
+  elasticRangeAxis = null;
   regionFitMode = "default";
   hardeningWarningMode = "popup";
   setFeedback("Range inputs overridden to start through yield.");
@@ -1934,8 +1974,10 @@ selectUtsRangeBtn.addEventListener("click", () => {
   stressMinInput.value = String(minStress(parsed.pairs));
   stressMaxInput.value = String(utsPoint.y);
   stressRangeActive = true;
+  strainRangeActive = false;
   lineRangeActive = false;
   elasticLineOverride = null;
+  elasticRangeAxis = null;
   regionFitMode = "default";
   hardeningWarningMode = "popup";
   setFeedback("Range inputs overridden to start through UTS.");
@@ -1965,11 +2007,166 @@ selectPlasticRangeBtn.addEventListener("click", () => {
     plasticStrainStepInput.value = "0.005";
   }
   stressRangeActive = true;
+  strainRangeActive = false;
   lineRangeActive = false;
   elasticLineOverride = null;
+  elasticRangeAxis = null;
   regionFitMode = "plastic";
   hardeningWarningMode = "popup";
   setFeedback("Range inputs overridden to yield through maximum stress.");
+  refreshFromSource();
+});
+
+applyStrainRangeBtn.addEventListener("click", () => {
+  strainRangeActive = true;
+  stressRangeActive = false;
+  lineRangeActive = false;
+  elasticLineOverride = null;
+  elasticRangeAxis = null;
+  regionFitMode = "default";
+  hardeningWarningMode = "popup";
+  const source = rawData || input.value;
+  if (source.trim().length === 0) {
+    setFeedback("Load data before applying a range.");
+    strainRangeActive = false;
+    hardeningWarningMode = "silent";
+    updateControlsState();
+    return;
+  }
+  const range = readStrainRange();
+  if (range.error) {
+    setFeedback(range.error);
+    strainRangeActive = false;
+    hardeningWarningMode = "silent";
+    updateControlsState();
+    return;
+  }
+  refreshFromSource();
+});
+
+clearStrainRangeBtn.addEventListener("click", () => {
+  strainMinInput.value = "";
+  strainMaxInput.value = "";
+  strainRangeActive = false;
+  regionFitMode = "default";
+  refreshFromSource();
+  updateControlsState();
+});
+
+selectAllStrainRangeBtn.addEventListener("click", () => {
+  const source = rawData || input.value;
+  if (source.trim().length === 0) {
+    setFeedback("Load data before selecting all range data.");
+    return;
+  }
+  const result = parseNumbers(source);
+  if (result.error) {
+    setFeedback(result.error);
+    return;
+  }
+  const values = result.pairs.map((pair) => pair.x);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  strainMinInput.value = String(min);
+  strainMaxInput.value = String(max);
+  strainRangeActive = true;
+  stressRangeActive = false;
+  lineRangeActive = false;
+  elasticLineOverride = null;
+  elasticRangeAxis = null;
+  regionFitMode = "default";
+  hardeningWarningMode = "popup";
+  setFeedback("Range inputs overridden to full data range.");
+  refreshFromSource();
+});
+
+selectYieldStrainRangeBtn.addEventListener("click", () => {
+  const source = rawData || input.value;
+  if (source.trim().length === 0) {
+    setFeedback("Load data before selecting yield range data.");
+    return;
+  }
+  const parsed = parseNumbers(source);
+  if (parsed.error) {
+    setFeedback(parsed.error);
+    return;
+  }
+  const yieldPointData = estimateYieldPoint(parsed.pairs);
+  if (!yieldPointData) {
+    setFeedback("Unable to determine yield point from current data.");
+    return;
+  }
+  strainMinInput.value = String(minStrain(parsed.pairs));
+  strainMaxInput.value = String(yieldPointData.x);
+  strainRangeActive = true;
+  stressRangeActive = false;
+  lineRangeActive = false;
+  elasticLineOverride = null;
+  elasticRangeAxis = null;
+  regionFitMode = "default";
+  hardeningWarningMode = "popup";
+  setFeedback("Range inputs overridden to start through yield.");
+  refreshFromSource();
+});
+
+selectUtsStrainRangeBtn.addEventListener("click", () => {
+  const source = rawData || input.value;
+  if (source.trim().length === 0) {
+    setFeedback("Load data before selecting UTS range data.");
+    return;
+  }
+  const parsed = parseNumbers(source);
+  if (parsed.error) {
+    setFeedback(parsed.error);
+    return;
+  }
+  const utsPoint = parsed.pairs.reduce(
+    (max, pair) => (pair.y > max.y ? pair : max),
+    parsed.pairs[0],
+  );
+  strainMinInput.value = String(minStrain(parsed.pairs));
+  strainMaxInput.value = String(utsPoint.x);
+  strainRangeActive = true;
+  stressRangeActive = false;
+  lineRangeActive = false;
+  elasticLineOverride = null;
+  elasticRangeAxis = null;
+  regionFitMode = "default";
+  hardeningWarningMode = "popup";
+  setFeedback("Range inputs overridden to start through UTS.");
+  refreshFromSource();
+});
+
+selectPlasticStrainRangeBtn.addEventListener("click", () => {
+  const source = rawData || input.value;
+  if (source.trim().length === 0) {
+    setFeedback("Load data before selecting plastic range data.");
+    return;
+  }
+  const parsed = parseNumbers(source);
+  if (parsed.error) {
+    setFeedback(parsed.error);
+    return;
+  }
+  const yieldPointData = estimateYieldPoint(parsed.pairs);
+  if (!yieldPointData) {
+    setFeedback("Unable to determine yield point from current data.");
+    return;
+  }
+  const maxStrain = Math.max(...parsed.pairs.map((pair) => pair.x));
+  strainMinInput.value = String(yieldPointData.x);
+  strainMaxInput.value = String(maxStrain);
+  if (plasticStrainStepInput) {
+    plasticStrainStepInput.value = "0.005";
+  }
+  strainRangeActive = true;
+  stressRangeActive = false;
+  lineRangeActive = false;
+  elasticLineOverride = null;
+  elasticRangeAxis = null;
+  regionFitMode = "plastic";
+  hardeningWarningMode = "popup";
+  setFeedback("Range inputs overridden to yield through maximum strain.");
   refreshFromSource();
 });
 
@@ -1979,7 +2176,10 @@ hasHeaderCheckbox.addEventListener("change", () => {
 
 applyLineRangeBtn.addEventListener("click", () => {
   lineRangeActive = true;
+  stressRangeActive = false;
+  strainRangeActive = false;
   elasticRangeOverride = null;
+  elasticRangeAxis = null;
   regionFitMode = "default";
   hardeningWarningMode = "popup";
   const source = rawData || input.value;
@@ -2027,6 +2227,7 @@ selectAllLineRangeBtn.addEventListener("click", () => {
   lineToInput.value = String(maxLine);
   lineRangeActive = true;
   elasticRangeOverride = null;
+  elasticRangeAxis = null;
   regionFitMode = "default";
   hardeningWarningMode = "popup";
   setFeedback("Range inputs overridden to full data range.");
@@ -2063,7 +2264,9 @@ selectYieldLineRangeBtn.addEventListener("click", () => {
   lineToInput.value = String(yieldIndex + 1);
   lineRangeActive = true;
   stressRangeActive = false;
+  strainRangeActive = false;
   elasticRangeOverride = null;
+  elasticRangeAxis = null;
   regionFitMode = "default";
   hardeningWarningMode = "popup";
   setFeedback("Line range overridden to start through yield.");
@@ -2090,7 +2293,9 @@ selectUtsLineRangeBtn.addEventListener("click", () => {
   lineToInput.value = String(utsIndex + 1);
   lineRangeActive = true;
   stressRangeActive = false;
+  strainRangeActive = false;
   elasticRangeOverride = null;
+  elasticRangeAxis = null;
   regionFitMode = "default";
   hardeningWarningMode = "popup";
   setFeedback("Line range overridden to start through UTS.");
@@ -2128,7 +2333,9 @@ selectPlasticLineRangeBtn.addEventListener("click", () => {
   lineToInput.value = String(utsIndex + 1);
   lineRangeActive = true;
   stressRangeActive = false;
+  strainRangeActive = false;
   elasticRangeOverride = null;
+  elasticRangeAxis = null;
   regionFitMode = "plastic";
   hardeningWarningMode = "popup";
   setFeedback("Line range overridden to yield through maximum stress.");
@@ -2190,11 +2397,14 @@ resetBtn.addEventListener("click", () => {
   elasticRangeOverride = null;
   elasticLineOverride = null;
   stressRangeActive = false;
+  strainRangeActive = false;
   lineRangeActive = false;
   selectionStatus.textContent = "Fit source: auto-selection.";
   hasHeaderCheckbox.checked = false;
   stressMinInput.value = "";
   stressMaxInput.value = "";
+  strainMinInput.value = "";
+  strainMaxInput.value = "";
   lineFromInput.value = "";
   lineToInput.value = "";
   elasticModulusInput.value = "";
@@ -2244,6 +2454,7 @@ resetBtn.addEventListener("click", () => {
   yieldPointTop.textContent = "Yield (0.2%): --";
   utsText.textContent = "UTS: --";
   utsTop.textContent = "UTS: --";
+  tangentText.textContent = "Tangent modulus: --";
   hardeningText.textContent = "Power hardening: --";
   regionFitCubic.textContent = "R2: --";
   regionFitLine.textContent = "Regression: --";
@@ -2293,6 +2504,11 @@ summaryBtn.addEventListener("click", () => {
     setFeedback(stressRange.error);
     return;
   }
+  const strainRange = readStrainRange();
+  if (strainRange.error) {
+    setFeedback(strainRange.error);
+    return;
+  }
 
   const unit = stressUnitSelect.value;
   const totalPoints = parsed.pairs.length;
@@ -2312,11 +2528,15 @@ summaryBtn.addEventListener("click", () => {
   const fitSource = elasticLineOverride
     ? `Line range (${elasticLineOverride.length} points)`
     : elasticRangeOverride
-    ? `Stress range (${elasticRangeOverride.length} points)`
+    ? `${elasticRangeAxis === "strain" ? "Strain" : "Stress"} range (${elasticRangeOverride.length} points)`
     : "Auto-selection";
 
-  const rangeLabel = stressRangeActive
+  const stressRangeLabel = stressRangeActive
     ? `${stressRange.min ?? "-inf"} to ${stressRange.max ?? "inf"} ${unit}`
+    : "Not active";
+
+  const strainRangeLabel = strainRangeActive
+    ? `${strainRange.min ?? "-inf"} to ${strainRange.max ?? "inf"}`
     : "Not active";
 
   const lineLabel = lineRangeActive
@@ -2325,6 +2545,10 @@ summaryBtn.addEventListener("click", () => {
 
   const modulusText = modulus.textContent || "Young's Modulus: --";
   const utsText = metrics ? `${metrics.uts.toFixed(2)} ${unit}` : "--";
+  const tangentSummaryText =
+    metrics && metrics.tangentModulus !== null
+      ? `${metrics.tangentModulus.toFixed(2)} ${unit}`
+      : "--";
   const yieldSummaryText = metrics?.yieldPoint
     ? `${metrics.yieldPoint.y.toFixed(2)} ${unit} @ ${metrics.yieldPoint.x.toFixed(4)}`
     : "--";
@@ -2363,9 +2587,11 @@ summaryBtn.addEventListener("click", () => {
     `Total points: ${totalPoints}`,
     `${modulusText}`,
     `Fit source: ${fitSource}`,
-    `Stress range: ${rangeLabel}`,
+    `Stress range: ${stressRangeLabel}`,
+    `Strain range: ${strainRangeLabel}`,
     `Line range: ${lineLabel}`,
     `UTS: ${utsText}`,
+    `Tangent modulus: ${tangentSummaryText}`,
     `Yield (0.2%): ${yieldSummaryText}`,
     `Fracture: ${fractureText}`,
     `Toughness: ${toughnessText}`,
@@ -2400,6 +2626,27 @@ function readStressRange() {
 
   if (min !== null && max !== null && min > max) {
     return { error: "Stress range min must be <= max." };
+  }
+
+  return { min, max };
+}
+
+function readStrainRange() {
+  if (!strainRangeActive) {
+    return { min: null, max: null };
+  }
+
+  const minValue = strainMinInput.value.trim();
+  const maxValue = strainMaxInput.value.trim();
+  const min = minValue === "" ? null : Number(minValue);
+  const max = maxValue === "" ? null : Number(maxValue);
+
+  if ((min !== null && Number.isNaN(min)) || (max !== null && Number.isNaN(max))) {
+    return { error: "Strain range must be numeric values." };
+  }
+
+  if (min !== null && max !== null && min > max) {
+    return { error: "Strain range min must be <= max." };
   }
 
   return { min, max };
@@ -3335,16 +3582,17 @@ function buildPlasticOutput(
 }
 
 
-function applyStressRange(pairs, range) {
-  if (range.min === null && range.max === null) {
+function applyRange(pairs, range, axis) {
+  if (!axis || (range.min === null && range.max === null)) {
     return { pairs };
   }
 
   const filtered = pairs.filter((pair) => {
-    if (range.min !== null && pair.y < range.min) {
+    const value = axis === "strain" ? pair.x : pair.y;
+    if (range.min !== null && value < range.min) {
       return false;
     }
-    if (range.max !== null && pair.y > range.max) {
+    if (range.max !== null && value > range.max) {
       return false;
     }
     return true;
@@ -3353,11 +3601,11 @@ function applyStressRange(pairs, range) {
   return { pairs: filtered };
 }
 
-function updateDisplay(raw, range, lineRange, autoFitRange) {
-  input.value = formatLinesWithNumbers(raw, range, lineRange, autoFitRange);
+function updateDisplay(raw, range, lineRange, autoFitRange, rangeAxis) {
+  input.value = formatLinesWithNumbers(raw, range, lineRange, autoFitRange, rangeAxis);
 }
 
-function formatLinesWithNumbers(raw, range, lineRange, autoFitRange) {
+function formatLinesWithNumbers(raw, range, lineRange, autoFitRange, rangeAxis) {
   if (!raw || raw.trim().length === 0) {
     return "";
   }
@@ -3365,7 +3613,7 @@ function formatLinesWithNumbers(raw, range, lineRange, autoFitRange) {
   const lines = raw.trim().split(/\r?\n/);
   const dataLines = getDataLines(raw);
   const width = String(dataLines.length || 1).length;
-  const hasRange = range.min !== null || range.max !== null;
+  const hasRange = rangeAxis && (range.min !== null || range.max !== null);
   const hasLineRange = lineRange && lineRange.active;
   const hasAutoFitRange =
     !hasLineRange &&
@@ -3396,7 +3644,8 @@ function formatLinesWithNumbers(raw, range, lineRange, autoFitRange) {
         }
       } else if (hasRange) {
         const pair = parseLinePair(line);
-        if (pair && inRange(pair.y, range)) {
+        const value = pair ? (rangeAxis === "strain" ? pair.x : pair.y) : null;
+        if (value !== null && inRange(value, range)) {
           marker = ">>";
         }
       } else if (hasAutoFitRange) {
@@ -3440,6 +3689,8 @@ function updateControlsState() {
   const hasData = (rawData || input.value).trim().length > 0;
   const rangeInputsFilled =
     stressMinInput.value.trim().length > 0 || stressMaxInput.value.trim().length > 0;
+  const strainRangeInputsFilled =
+    strainMinInput.value.trim().length > 0 || strainMaxInput.value.trim().length > 0;
   const lineInputsFilled =
     lineFromInput.value.trim().length > 0 || lineToInput.value.trim().length > 0;
 
@@ -3450,6 +3701,12 @@ function updateControlsState() {
   selectYieldRangeBtn.disabled = !hasData;
   selectUtsRangeBtn.disabled = !hasData;
   selectPlasticRangeBtn.disabled = !hasData;
+  applyStrainRangeBtn.disabled = !hasData;
+  clearStrainRangeBtn.disabled = !strainRangeActive && !strainRangeInputsFilled;
+  selectAllStrainRangeBtn.disabled = !hasData;
+  selectYieldStrainRangeBtn.disabled = !hasData;
+  selectUtsStrainRangeBtn.disabled = !hasData;
+  selectPlasticStrainRangeBtn.disabled = !hasData;
   applyLineRangeBtn.disabled = !hasData;
   clearLineRangeBtn.disabled = !lineRangeActive && !lineInputsFilled;
   selectAllLineRangeBtn.disabled = !hasData;
@@ -3457,14 +3714,17 @@ function updateControlsState() {
   selectUtsLineRangeBtn.disabled = !hasData;
   selectPlasticLineRangeBtn.disabled = !hasData;
 
+  const rangeActive = stressRangeActive || strainRangeActive;
+
   if (elasticLineOverride) {
-    const note = stressRangeActive ? " (stress range disabled)" : "";
+    const note = rangeActive ? " (range disabled)" : "";
     selectionStatus.textContent = `Fit source: line range (${elasticLineOverride.length} points)${note}.`;
     return;
   }
   if (elasticRangeOverride) {
     const note = lineRangeActive ? " (line range disabled)" : "";
-    selectionStatus.textContent = `Fit source: stress range (${elasticRangeOverride.length} points)${note}.`;
+    const rangeLabel = elasticRangeAxis === "strain" ? "strain" : "stress";
+    selectionStatus.textContent = `Fit source: ${rangeLabel} range (${elasticRangeOverride.length} points)${note}.`;
     return;
   }
   selectionStatus.textContent = "Fit source: auto-selection.";
@@ -3562,6 +3822,10 @@ function getAutoFitRange(pairs) {
 
 function minStress(pairs) {
   return pairs.reduce((min, pair) => Math.min(min, pair.y), pairs[0].y);
+}
+
+function minStrain(pairs) {
+  return pairs.reduce((min, pair) => Math.min(min, pair.x), pairs[0].x);
 }
 
 function findYieldLineIndex(lines, yieldPointData) {

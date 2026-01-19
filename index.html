@@ -75,6 +75,26 @@
           </div>
 
           <div class="file-block">
+            <label title="Filter the plotted data by strain value.">Plot strain range</label>
+            <div class="range-row">
+              <input id="strainMin" type="number" step="any" placeholder="Min" title="Minimum strain to include." />
+              <span>to</span>
+              <input id="strainMax" type="number" step="any" placeholder="Max" title="Maximum strain to include." />
+            </div>
+            <div class="range-actions">
+              <button id="applyStrainRangeBtn" class="ghost" title="Apply the strain range filter.">Use range</button>
+              <button id="clearStrainRangeBtn" class="ghost" title="Clear the strain range filter.">Clear range</button>
+            </div>
+            <div class="range-actions">
+              <button id="selectAllStrainRangeBtn" class="ghost" title="Set the range to cover all data (overrides inputs).">Select all data</button>
+              <button id="selectYieldStrainRangeBtn" class="ghost" title="Set the range from the start up to the 0.2% yield strain.">Select to yield</button>
+              <button id="selectUtsStrainRangeBtn" class="ghost" title="Set the range from the start up to the UTS strain.">Select to UTS</button>
+              <button id="selectPlasticStrainRangeBtn" class="ghost" title="1) Read engineering strain/stress from file. 2) Find 0.2% yield. 3) Keep points from yield to UTS. 4) Convert to true strain/stress (etrue=ln(1+e), sigma_true=sigma(1+e)). 5) Fit a cubic to the true data and display R2.">Select plastic region</button>
+            </div>
+            <p class="file-helper">Leave blank for no limit (numeric values only).</p>
+          </div>
+
+          <div class="file-block">
             <label title="Select data rows by line number for regression.">Fit line range</label>
             <div class="range-row">
               <input id="lineFrom" type="number" step="1" min="1" placeholder="From" title="Start line number (data rows only)." />
@@ -314,7 +334,7 @@
           </div>
           <p id="feedback" class="feedback" aria-live="polite"></p>
           <p id="selectionStatus" class="status">Fit source: auto-selection.</p>
-          <p class="status">Legend: <span class="marker">>></span> = within stress range</p>
+          <p class="status">Legend: <span class="marker">>></span> = within active range</p>
           <div class="notes">
             <span>Input rules:</span>
             <span>Use commas, tabs, or new lines between every number.</span>
@@ -381,6 +401,7 @@
             <p id="modulus" class="modulus" title="Young's Modulus is computed from the full dataset (auto elastic fit), not the selected range.">Young's Modulus: --</p>
             <p id="yieldPointText" class="modulus">Yield (0.2%): --</p>
             <p id="utsText" class="modulus">UTS: --</p>
+            <p id="tangentText" class="modulus">Tangent modulus: --</p>
             <p id="hardeningText" class="modulus">Power hardening: --</p>
             <p id="regionFitLine" class="modulus">Regression: --</p>
             <p id="regionFitCubic" class="modulus">R2: --</p>

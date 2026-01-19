@@ -9,7 +9,7 @@ A browser-based app for plotting engineering and true stress-strain curves, fitt
 - Paste or upload CSV/TSV data as strain, stress pairs.
 - Optional header handling and line-numbered data display.
 - Plot engineering and true stress-strain curves.
-- Compute Young's Modulus (auto elastic-region fit), Yield (0.2%), and UTS.
+- Compute Young's Modulus (auto fit of the initial linear elastic region), Yield (0.2% offset), UTS, and tangent modulus (bilinear).
 - Select ranges by stress or by line numbers (with helper buttons).
 - Region fit plot with selectable regression models: None, Linear, Quadratic, Cubic, Exponential.
 - Plastic-region analysis with cubic fit (true stress-strain) and R2.
@@ -45,6 +45,7 @@ Rules:
 
 - Stress units: choose Pa / MPa / GPa for the stress column.
 - Plot stress range: filters the top plot by stress values.
+- Plot strain range: filters the top plot by strain values.
 - Fit line range: selects data rows for region regression.
 - Select to yield / UTS / plastic region: quick range helpers.
 - Regression (Region fit): chooses the regression overlay and formula display.
@@ -77,6 +78,8 @@ The repo includes Al2024-T351.csv as a built-in reference dataset.
 ## Notes
 
 - The app uses least-squares regression for linear fits (Excel SLOPE/LINEST equivalent).
+- Young's modulus is estimated from the best linear fit of the initial (prefix) elastic region within the configured strain window.
+- Tangent modulus is computed from the 0.2% offset yield point to the UTS point (engineering stress-strain).
 - Log-log power hardening fits require plastic-region data (post-yield).
 
 ## License
