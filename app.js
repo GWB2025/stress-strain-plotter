@@ -77,6 +77,7 @@ const copySummaryBtn = document.querySelector("#copySummaryBtn");
 const closeSummaryBtn = document.querySelector("#closeSummaryBtn");
 if (summaryPanel) {
   summaryPanel.hidden = true;
+  summaryPanel.style.display = "none";
 }
 const modulus = document.querySelector("#modulus");
 const yieldPointText = document.querySelector("#yieldPointText");
@@ -193,7 +194,6 @@ function shouldSkipHeader(raw) {
 function detectHeader(raw) {
   const lines = stripDecorations(raw).split(/\r?\n/);
   let first = null;
-  let second = null;
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed) {
@@ -201,10 +201,8 @@ function detectHeader(raw) {
     }
     if (!first) {
       first = trimmed;
-      continue;
+      break;
     }
-    second = trimmed;
-    break;
   }
 
   if (!first) {
@@ -212,20 +210,7 @@ function detectHeader(raw) {
   }
 
   const firstStats = analyzeHeaderTokens(first);
-  if (firstStats.numericCount >= 2 && !firstStats.hasNonNumeric) {
-    return false;
-  }
-
-  if (!second) {
-    return firstStats.hasNonNumeric;
-  }
-
-  const secondStats = analyzeHeaderTokens(second);
-  if (secondStats.numericCount >= 2 && (firstStats.numericCount < 2 || firstStats.hasNonNumeric)) {
-    return true;
-  }
-
-  return false;
+  return firstStats.hasNonNumeric;
 }
 
 function analyzeHeaderTokens(line) {
@@ -1616,6 +1601,7 @@ function showSummaryPanel(message) {
   }
   summaryOutput.value = message;
   summaryPanel.hidden = false;
+  summaryPanel.style.display = "flex";
   summaryOutput.focus();
   summaryOutput.select();
 }
@@ -1672,10 +1658,6 @@ function buildSummaryMessage(source) {
   }
 
   const unit = stressUnitSelect.value;
-  const totalPoints = parsed.pairs.length;
-  const fit = estimateYoungsModulus(parsed.pairs, elasticLineOverride || elasticRangeOverride);
-  const baseFit = estimateYoungsModulus(parsed.pairs);
-  const metrics = computeMetrics(parsed.pairs, baseFit);
   const selectedPairs = elasticLineOverride || elasticRangeOverride || null;
   const summaryRangeOnly = !!summaryRangeToggle?.checked;
   const summaryScope = summaryRangeOnly
@@ -1684,7 +1666,9 @@ function buildSummaryMessage(source) {
       : "Selected range (not active)"
     : "Full dataset";
   const summaryPairs = summaryRangeOnly && selectedPairs ? selectedPairs : parsed.pairs;
+  const totalPoints = summaryPairs.length;
   const summaryFit = estimateYoungsModulus(summaryPairs);
+  const metrics = computeMetrics(summaryPairs, summaryFit);
   const hardeningPairs = summaryPairs;
   const truePlasticPairs = getTruePlasticPairs(summaryPairs, summaryFit);
   const elasticModulus = readElasticModulus();
@@ -1717,8 +1701,8 @@ function buildSummaryMessage(source) {
   };
 
   const modulusText =
-    baseFit && Number.isFinite(baseFit.slope)
-      ? `Young's Modulus: ${formatStress(baseFit.slope)} ${unit}`
+    summaryFit && Number.isFinite(summaryFit.slope)
+      ? `Young's Modulus: ${formatStress(summaryFit.slope)} ${unit}`
       : "Young's Modulus: --";
   const utsText = metrics
     ? `${formatStress(metrics.uts)} ${unit} @ ${metrics.utsStrain.toFixed(6)}`
@@ -1778,10 +1762,22 @@ function buildSummaryMessage(source) {
   ].join("\n");
 }
 
+function refreshSummaryOutput() {
+  if (!summaryOutput) {
+    return null;
+  }
+  const source = rawData || input.value;
+  const message = buildSummaryMessage(source);
+  if (message) {
+    summaryOutput.value = message;
+  }
+  return message;
+}
+
 function plotFromRaw(raw) {
   rawData = stripDecorations(raw);
-  if (hasHeaderCheckbox && detectHeader(rawData)) {
-    hasHeaderCheckbox.checked = true;
+  if (hasHeaderCheckbox) {
+    hasHeaderCheckbox.checked = detectHeader(rawData);
   }
   const result = parseNumbers(rawData);
   if (result.error) {
@@ -1884,10 +1880,7 @@ function plotFromRaw(raw) {
   const xDomain = extent(fullPairs.map((pair) => pair.x));
   const yDomain = extent(fullPairs.map((pair) => pair.y));
   summary.textContent = `${fullPairs.length} points | Strain ${xDomain[0].toFixed(2)}-${xDomain[1].toFixed(2)} | Stress ${yDomain[0].toFixed(2)}-${yDomain[1].toFixed(2)}`;
-  const summaryMessage = buildSummaryMessage(rawData);
-  if (summaryMessage && summaryOutput) {
-    summaryOutput.value = summaryMessage;
-  }
+  refreshSummaryOutput();
   updateControlsState();
 }
 
@@ -1909,6 +1902,7 @@ stressUnitSelect.addEventListener("change", () => {
     );
   }
   updatePowerSummaryAndBadges();
+  refreshSummaryOutput();
 });
 
 showTrueCheckbox.addEventListener("change", () => {
@@ -1981,6 +1975,20 @@ if (powerSpacingInputs && powerSpacingInputs.length > 0) {
     });
   });
 }
+
+if (summaryRangeToggle) {
+  summaryRangeToggle.addEventListener("change", () => {
+    refreshSummaryOutput();
+  });
+}
+
+[stressMinInput, stressMaxInput, strainMinInput, strainMaxInput, lineFromInput, lineToInput]
+  .filter(Boolean)
+  .forEach((input) => {
+    input.addEventListener("input", () => {
+      refreshSummaryOutput();
+    });
+  });
 
 loadPowerRowBtn.addEventListener("click", () => {
   const text = powerRowInput ? powerRowInput.value.trim() : "";
@@ -2738,14 +2746,7 @@ summaryBtn.addEventListener("click", () => {
     return;
   }
 
-  const source = rawData || input.value;
-  const parsed = parseNumbers(source);
-  if (parsed.error) {
-    setFeedback(parsed.error);
-    return;
-  }
-
-  const message = buildSummaryMessage(source);
+  const message = refreshSummaryOutput();
   if (!message) {
     setFeedback("Unable to build summary from current data.");
     return;
@@ -2763,6 +2764,7 @@ if (copySummaryBtn) {
 if (closeSummaryBtn && summaryPanel) {
   closeSummaryBtn.addEventListener("click", () => {
     summaryPanel.hidden = true;
+    summaryPanel.style.display = "none";
   });
 }
 
