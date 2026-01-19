@@ -68,8 +68,13 @@ const dataPlotOffset = document.querySelector("#dataPlotOffset");
 const dataPlotPoints = document.querySelector("#dataPlotPoints");
 const resetBtn = document.querySelector("#resetBtn");
 const summaryBtn = document.querySelector("#summaryBtn");
+const summaryRangeToggle = document.querySelector("#summaryRangeToggle");
 const feedback = document.querySelector("#feedback");
 const summary = document.querySelector("#summary");
+const summaryPanel = document.querySelector("#summaryPanel");
+const summaryOutput = document.querySelector("#summaryOutput");
+const copySummaryBtn = document.querySelector("#copySummaryBtn");
+const closeSummaryBtn = document.querySelector("#closeSummaryBtn");
 const modulus = document.querySelector("#modulus");
 const yieldPointText = document.querySelector("#yieldPointText");
 const yieldPointTop = document.querySelector("#yieldPointTop");
@@ -157,7 +162,7 @@ const referenceDataset = {
 
 function normalizeRaw(raw) {
   const withoutDecorations = stripDecorations(raw);
-  if (!hasHeaderCheckbox.checked) {
+  if (!shouldSkipHeader(withoutDecorations)) {
     return withoutDecorations;
   }
 
@@ -173,6 +178,66 @@ function normalizeRaw(raw) {
   }
 
   return remaining.join("\n");
+}
+
+function shouldSkipHeader(raw) {
+  if (hasHeaderCheckbox.checked) {
+    return true;
+  }
+  return detectHeader(raw);
+}
+
+function detectHeader(raw) {
+  const lines = stripDecorations(raw).split(/\r?\n/);
+  let first = null;
+  let second = null;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+    if (!first) {
+      first = trimmed;
+      continue;
+    }
+    second = trimmed;
+    break;
+  }
+
+  if (!first) {
+    return false;
+  }
+
+  const firstStats = analyzeHeaderTokens(first);
+  if (firstStats.numericCount >= 2 && !firstStats.hasNonNumeric) {
+    return false;
+  }
+
+  if (!second) {
+    return firstStats.hasNonNumeric;
+  }
+
+  const secondStats = analyzeHeaderTokens(second);
+  if (secondStats.numericCount >= 2 && (firstStats.numericCount < 2 || firstStats.hasNonNumeric)) {
+    return true;
+  }
+
+  return false;
+}
+
+function analyzeHeaderTokens(line) {
+  const tokens = line.split(/[\s,\t]+/).filter(Boolean);
+  let numericCount = 0;
+  let hasNonNumeric = false;
+  for (const token of tokens) {
+    const value = Number(token);
+    if (Number.isFinite(value)) {
+      numericCount += 1;
+    } else {
+      hasNonNumeric = true;
+    }
+  }
+  return { numericCount, hasNonNumeric };
 }
 
 function parseNumbers(raw) {
@@ -537,7 +602,7 @@ function renderChart(pairs, overridePairs, shouldAutoFill) {
     yieldPointTop.textContent = "Yield (0.2%): --";
   }
 
-  autoFillInputs(baseModulus, shouldAutoFill);
+  autoFillInputs(pairs, baseModulus, shouldAutoFill);
   elasticModulus = readElasticModulus();
   plasticStrainStep = readPlasticStrainStep(false);
   const hardeningAllowed =
@@ -801,7 +866,15 @@ function computeMetrics(pairs, fit) {
     }
   }
 
-  return { uts, fracture, toughness, resilience, yieldPoint, tangentModulus };
+  return {
+    uts,
+    utsStrain: utsPair.x,
+    fracture,
+    toughness,
+    resilience,
+    yieldPoint,
+    tangentModulus,
+  };
 }
 
 function buildRegionFit(pairs) {
@@ -1533,8 +1606,180 @@ function setFeedback(message) {
   }
 }
 
+function showSummaryPanel(message) {
+  if (!summaryPanel || !summaryOutput) {
+    alert(message);
+    return;
+  }
+  summaryOutput.value = message;
+  summaryPanel.hidden = false;
+  summaryOutput.focus();
+  summaryOutput.select();
+}
+
+function copySummaryToClipboard() {
+  if (!summaryOutput) {
+    return;
+  }
+  const text = summaryOutput.value.trim();
+  if (!text) {
+    setFeedback("Summary is empty.");
+    return;
+  }
+
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard
+      .writeText(text)
+      .then(() => setFeedback("Summary copied."))
+      .catch(() => {
+        summaryOutput.select();
+        const ok = document.execCommand("copy");
+        setFeedback(ok ? "Summary copied." : "Unable to copy summary.");
+      });
+    return;
+  }
+
+  summaryOutput.select();
+  const ok = document.execCommand("copy");
+  setFeedback(ok ? "Summary copied." : "Unable to copy summary.");
+}
+
+function buildSummaryMessage(source) {
+  if (!source || !source.trim()) {
+    return null;
+  }
+  const parsed = parseNumbers(source);
+  if (parsed.error) {
+    return null;
+  }
+
+  const lineRange = readLineRange(stripDecorations(source));
+  if (lineRange.error) {
+    return null;
+  }
+
+  const stressRange = readStressRange();
+  if (stressRange.error) {
+    return null;
+  }
+
+  const strainRange = readStrainRange();
+  if (strainRange.error) {
+    return null;
+  }
+
+  const unit = stressUnitSelect.value;
+  const totalPoints = parsed.pairs.length;
+  const fit = estimateYoungsModulus(parsed.pairs, elasticLineOverride || elasticRangeOverride);
+  const baseFit = estimateYoungsModulus(parsed.pairs);
+  const metrics = computeMetrics(parsed.pairs, baseFit);
+  const selectedPairs = elasticLineOverride || elasticRangeOverride || null;
+  const summaryRangeOnly = !!summaryRangeToggle?.checked;
+  const summaryScope = summaryRangeOnly
+    ? selectedPairs
+      ? "Selected range"
+      : "Selected range (not active)"
+    : "Full dataset";
+  const summaryPairs = summaryRangeOnly && selectedPairs ? selectedPairs : parsed.pairs;
+  const summaryFit = estimateYoungsModulus(summaryPairs);
+  const hardeningPairs = summaryPairs;
+  const truePlasticPairs = getTruePlasticPairs(summaryPairs, summaryFit);
+  const elasticModulus = readElasticModulus();
+  const plasticStrainStep = readPlasticStrainStep();
+  const hardening = summaryFit ? estimatePowerHardening(hardeningPairs, summaryFit) : null;
+  const yieldResult = summaryFit ? estimateOffsetYield(summaryPairs, summaryFit) : null;
+  const fitSource = elasticLineOverride
+    ? `Line range (${elasticLineOverride.length} points)`
+    : elasticRangeOverride
+    ? `${elasticRangeAxis === "strain" ? "Strain" : "Stress"} range (${elasticRangeOverride.length} points)`
+    : "Auto-selection";
+
+  const stressRangeLabel = stressRangeActive
+    ? `${stressRange.min ?? "-inf"} to ${stressRange.max ?? "inf"} ${unit}`
+    : "Not active";
+
+  const strainRangeLabel = strainRangeActive
+    ? `${strainRange.min ?? "-inf"} to ${strainRange.max ?? "inf"}`
+    : "Not active";
+
+  const lineLabel = lineRangeActive
+    ? `${lineFromInput.value || "?"} to ${lineToInput.value || "?"} (data rows)`
+    : "Not active";
+
+  const formatStress = (value) => {
+    if (!Number.isFinite(value)) {
+      return "--";
+    }
+    return unit === "MPa" ? `${Math.round(value)}` : value.toFixed(2);
+  };
+
+  const modulusText =
+    baseFit && Number.isFinite(baseFit.slope)
+      ? `Young's Modulus: ${formatStress(baseFit.slope)} ${unit}`
+      : "Young's Modulus: --";
+  const utsText = metrics
+    ? `${formatStress(metrics.uts)} ${unit} @ ${metrics.utsStrain.toFixed(6)}`
+    : "--";
+  const tangentSummaryText =
+    metrics && metrics.tangentModulus !== null
+      ? `${formatStress(metrics.tangentModulus)} ${unit}`
+      : "--";
+  const yieldSummaryText = metrics?.yieldPoint
+    ? `${formatStress(metrics.yieldPoint.y)} ${unit} @ ${metrics.yieldPoint.x.toFixed(6)}`
+    : "--";
+  const fractureText = metrics
+    ? `${formatStress(metrics.fracture.y)} ${unit} @ ${metrics.fracture.x.toFixed(6)}`
+    : "--";
+  const toughnessText = metrics ? `${formatStress(metrics.toughness)} ${unit}` : "--";
+  const resilienceText = metrics?.resilience
+    ? `${formatStress(metrics.resilience)} ${unit}`
+    : "--";
+  const hardeningText =
+    hardening && hardening.K !== null && hardening.n !== null
+      ? `H=${formatStress(hardening.K)} ${unit}, n=${hardening.n.toFixed(3)} (R2 ${hardening.r2.toFixed(4)}, ${hardening.count} pts)`
+      : "--";
+  const powerInputsText = getPowerInputSummary();
+  let plasticOutputSummary = "Plastic strain output: --";
+  if (elasticModulus.error || plasticStrainStep.error) {
+    plasticOutputSummary = "Plastic strain output: --";
+  } else if (!elasticModulus.value) {
+    plasticOutputSummary = "Plastic strain output: Enter E to compute.";
+  } else if (truePlasticPairs.length > 0) {
+    const rowCount = truePlasticPairs.length - (yieldResult ? 1 : 0);
+    const stepLabel = plasticStrainStep.value ? `, step=${plasticStrainStep.value}` : "";
+    plasticOutputSummary = `Plastic strain output: ${Math.max(rowCount, 1)} rows (E=${elasticModulus.value}${stepLabel})`;
+  }
+
+  return [
+    "Summary",
+    "",
+    `Total points: ${totalPoints}`,
+    `${modulusText}`,
+    `Fit source: ${fitSource}`,
+    `Stress range: ${stressRangeLabel}`,
+    `Strain range: ${strainRangeLabel}`,
+    `Line range: ${lineLabel}`,
+    `Power/plastic scope: ${summaryScope}`,
+    `UTS: ${utsText}`,
+    `Tangent modulus: ${tangentSummaryText}`,
+    `Yield (0.2%): ${yieldSummaryText} (auto elastic fit)`,
+    `Fracture: ${fractureText}`,
+    `Toughness: ${toughnessText}`,
+    `Resilience (elastic area): ${resilienceText}`,
+    `Power hardening: ${hardeningText}`,
+    `Power inputs: ${powerInputsText}`,
+    plasticOutputSummary,
+    referenceLoaded
+      ? `Reference (${referenceDataset.name}): ${referenceDataset.path}`
+      : "",
+  ].join("\n");
+}
+
 function plotFromRaw(raw) {
   rawData = stripDecorations(raw);
+  if (hasHeaderCheckbox && detectHeader(rawData)) {
+    hasHeaderCheckbox.checked = true;
+  }
   const result = parseNumbers(rawData);
   if (result.error) {
     setFeedback(result.error);
@@ -1636,6 +1881,10 @@ function plotFromRaw(raw) {
   const xDomain = extent(fullPairs.map((pair) => pair.x));
   const yDomain = extent(fullPairs.map((pair) => pair.y));
   summary.textContent = `${fullPairs.length} points | Strain ${xDomain[0].toFixed(2)}-${xDomain[1].toFixed(2)} | Stress ${yDomain[0].toFixed(2)}-${yDomain[1].toFixed(2)}`;
+  const summaryMessage = buildSummaryMessage(rawData);
+  if (summaryMessage && summaryOutput) {
+    summaryOutput.value = summaryMessage;
+  }
   updateControlsState();
 }
 
@@ -2493,118 +2742,26 @@ summaryBtn.addEventListener("click", () => {
     return;
   }
 
-  const lineRange = readLineRange(stripDecorations(source));
-  if (lineRange.error) {
-    setFeedback(lineRange.error);
+  const message = buildSummaryMessage(source);
+  if (!message) {
+    setFeedback("Unable to build summary from current data.");
     return;
   }
 
-  const stressRange = readStressRange();
-  if (stressRange.error) {
-    setFeedback(stressRange.error);
-    return;
-  }
-  const strainRange = readStrainRange();
-  if (strainRange.error) {
-    setFeedback(strainRange.error);
-    return;
-  }
-
-  const unit = stressUnitSelect.value;
-  const totalPoints = parsed.pairs.length;
-  const fit = estimateYoungsModulus(parsed.pairs, elasticLineOverride || elasticRangeOverride);
-  const baseFit = estimateYoungsModulus(parsed.pairs);
-  const hardeningPairs = elasticLineOverride || elasticRangeOverride || parsed.pairs;
-  const metrics = computeMetrics(parsed.pairs, fit);
-  const truePlasticPairs = getTruePlasticPairs(parsed.pairs, baseFit);
-  const elasticModulus = readElasticModulus();
-  const plasticStrainStep = readPlasticStrainStep();
-  const hardening = baseFit ? estimatePowerHardening(hardeningPairs, baseFit) : null;
-  const yieldResult = baseFit ? estimateOffsetYield(parsed.pairs, baseFit) : null;
-  const hardeningAllowed =
-    baseFit &&
-    yieldResult &&
-    minStress(hardeningPairs) > yieldResult.y;
-  const fitSource = elasticLineOverride
-    ? `Line range (${elasticLineOverride.length} points)`
-    : elasticRangeOverride
-    ? `${elasticRangeAxis === "strain" ? "Strain" : "Stress"} range (${elasticRangeOverride.length} points)`
-    : "Auto-selection";
-
-  const stressRangeLabel = stressRangeActive
-    ? `${stressRange.min ?? "-inf"} to ${stressRange.max ?? "inf"} ${unit}`
-    : "Not active";
-
-  const strainRangeLabel = strainRangeActive
-    ? `${strainRange.min ?? "-inf"} to ${strainRange.max ?? "inf"}`
-    : "Not active";
-
-  const lineLabel = lineRangeActive
-    ? `${lineFromInput.value || "?"} to ${lineToInput.value || "?"} (data rows)`
-    : "Not active";
-
-  const modulusText = modulus.textContent || "Young's Modulus: --";
-  const utsText = metrics ? `${metrics.uts.toFixed(2)} ${unit}` : "--";
-  const tangentSummaryText =
-    metrics && metrics.tangentModulus !== null
-      ? `${metrics.tangentModulus.toFixed(2)} ${unit}`
-      : "--";
-  const yieldSummaryText = metrics?.yieldPoint
-    ? `${metrics.yieldPoint.y.toFixed(2)} ${unit} @ ${metrics.yieldPoint.x.toFixed(4)}`
-    : "--";
-  const fractureText = metrics
-    ? `${metrics.fracture.y.toFixed(2)} ${unit} @ ${metrics.fracture.x.toFixed(4)}`
-    : "--";
-  const toughnessText = metrics ? `${metrics.toughness.toFixed(2)} ${unit}` : "--";
-  const resilienceText = metrics?.resilience
-    ? `${metrics.resilience.toFixed(2)} ${unit}`
-    : "--";
-  const hardeningText =
-    hardeningAllowed && hardening && hardening.K !== null && hardening.n !== null
-      ? `K=${hardening.K.toFixed(2)} ${unit}, n=${hardening.n.toFixed(3)} (R2 ${hardening.r2.toFixed(4)}, ${hardening.count} pts)`
-      : "--";
-  let plasticOutputSummary = "Plastic strain output: --";
-  if (regionFitMode === "plastic") {
-    if (elasticModulus.error) {
-      setFeedback(elasticModulus.error);
-      return;
-    }
-    if (plasticStrainStep.error) {
-      setFeedback(plasticStrainStep.error);
-      return;
-    }
-    if (!elasticModulus.value) {
-      plasticOutputSummary = "Plastic strain output: Enter E to compute.";
-    } else if (truePlasticPairs.length > 0) {
-      const rowCount = truePlasticPairs.length - (yieldResult ? 1 : 0);
-      const stepLabel = plasticStrainStep.value ? `, step=${plasticStrainStep.value}` : "";
-      plasticOutputSummary = `Plastic strain output: ${Math.max(rowCount, 1)} rows (E=${elasticModulus.value}${stepLabel})`;
-    }
-  }
-  const message = [
-    "Summary",
-    "",
-    `Total points: ${totalPoints}`,
-    `${modulusText}`,
-    `Fit source: ${fitSource}`,
-    `Stress range: ${stressRangeLabel}`,
-    `Strain range: ${strainRangeLabel}`,
-    `Line range: ${lineLabel}`,
-    `UTS: ${utsText}`,
-    `Tangent modulus: ${tangentSummaryText}`,
-    `Yield (0.2%): ${yieldSummaryText}`,
-    `Fracture: ${fractureText}`,
-    `Toughness: ${toughnessText}`,
-    `Resilience (elastic area): ${resilienceText}`,
-    `Power hardening: ${hardeningText}`,
-    plasticOutputSummary,
-    referenceLoaded
-      ? `Reference (${referenceDataset.name}): ${referenceDataset.path}`
-      : "",
-  ].join("\n");
-
-  alert(message);
+  showSummaryPanel(message);
 });
+
+if (copySummaryBtn) {
+  copySummaryBtn.addEventListener("click", () => {
+    copySummaryToClipboard();
+  });
+}
+
+if (closeSummaryBtn && summaryPanel) {
+  closeSummaryBtn.addEventListener("click", () => {
+    summaryPanel.hidden = true;
+  });
+}
 
 function stripDecorations(raw) {
   return raw.replace(/^\s*(?:>>\s*)?\d+\s*\|\s*/gm, "");
@@ -3113,7 +3270,7 @@ function buildAutoFillKey(pairs) {
   return `${pairs.length}:${first.x},${first.y}:${last.x},${last.y}`;
 }
 
-function autoFillInputs(baseModulus, force) {
+function autoFillInputs(pairs, baseModulus, force) {
   if (!force) {
     return;
   }
@@ -3123,6 +3280,38 @@ function autoFillInputs(baseModulus, force) {
   }
   if (plasticStrainStepInput) {
     plasticStrainStepInput.value = "0.005";
+  }
+
+  if (powerPointsInput) {
+    powerPointsInput.value = "13";
+  }
+
+  if (pairs && pairs.length > 1) {
+    const yieldPoint = baseModulus ? estimateOffsetYield(pairs, baseModulus) : null;
+    const utsPoint = pairs.reduce(
+      (max, pair) => (pair.y > max.y ? pair : max),
+      pairs[0],
+    );
+    const hardening = baseModulus ? estimatePowerHardening(pairs, baseModulus) : null;
+
+    if (powerYieldInput) {
+      powerYieldInput.value = yieldPoint ? formatInputValue(yieldPoint.y, 2) : "";
+    }
+    if (powerModulusInput) {
+      powerModulusInput.value = baseModulus ? formatInputValue(baseModulus.slope, 2) : "";
+    }
+    if (powerUtsInput) {
+      powerUtsInput.value = utsPoint ? formatInputValue(utsPoint.y, 2) : "";
+    }
+    if (powerCoeffInput) {
+      powerCoeffInput.value =
+        hardening && hardening.K !== null ? formatInputValue(hardening.K, 2) : "";
+    }
+    if (powerExponentInput) {
+      powerExponentInput.value =
+        hardening && hardening.n !== null ? formatInputValue(hardening.n, 4) : "";
+    }
+    markPowerDatasetDirty();
   }
 }
 
@@ -3631,7 +3820,7 @@ function formatLinesWithNumbers(raw, range, lineRange, autoFitRange, rangeAxis) 
       }
 
       let marker = "  ";
-      const isHeader = hasHeaderCheckbox.checked && !headerSkipped;
+      const isHeader = shouldSkipHeader(raw) && !headerSkipped;
       if (isHeader) {
         headerSkipped = true;
         return line;
@@ -3740,7 +3929,7 @@ function getDataLines(raw) {
     if (line.trim().length === 0) {
       continue;
     }
-    if (hasHeaderCheckbox.checked && !headerSkipped) {
+    if (shouldSkipHeader(raw) && !headerSkipped) {
       headerSkipped = true;
       continue;
     }

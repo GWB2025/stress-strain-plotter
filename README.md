@@ -15,6 +15,8 @@ A browser-based app for plotting engineering and true stress-strain curves, fitt
 - Plastic-region analysis with cubic fit (true stress-strain) and R2.
 - Power hardening (K, n) fit with log-log visualization (when valid).
 - Plastic strain output for ANSYS (with user-supplied E) and CSV export.
+- Power hardening inputs auto-fill from the loaded dataset when available (yield, E, UTS, H, n).
+- Summary panel with copy-to-clipboard.
 - Data table with derived columns and a data-column plot with regression overlays.
 
 ## Data Format
@@ -29,7 +31,7 @@ Input expects strain and stress numeric pairs:
 Rules:
 - Pairs are read as strain then stress.
 - Commas, tabs, or new lines can separate values.
-- If the file has a header, check "Data includes header row".
+- Header rows are auto-detected; use "Data includes header row" to force skipping the first row.
 
 ## Running the App
 

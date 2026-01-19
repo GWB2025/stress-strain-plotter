@@ -332,6 +332,12 @@
             <button id="resetBtn" class="ghost" title="Reset inputs and plots.">Reset</button>
             <button id="summaryBtn" class="ghost" title="Show a summary of the current analysis.">Summary</button>
           </div>
+          <div class="summary-options">
+            <label class="checkbox-row" title="Limit power hardening and plastic output summaries to the selected range.">
+              <input id="summaryRangeToggle" type="checkbox" />
+              Summary uses selected range
+            </label>
+          </div>
           <p id="feedback" class="feedback" aria-live="polite"></p>
           <p id="selectionStatus" class="status">Fit source: auto-selection.</p>
           <p class="status">Legend: <span class="marker">>></span> = within active range</p>
@@ -341,6 +347,19 @@
             <span>Pairs are read as strain then stress.</span>
           </div>
         </section>
+
+        <div id="summaryPanel" class="summary-panel" hidden>
+          <div class="summary-card">
+            <div class="summary-header">
+              <h3>Summary</h3>
+              <div class="summary-actions">
+                <button id="copySummaryBtn" class="ghost" title="Copy summary to clipboard.">Copy</button>
+                <button id="closeSummaryBtn" class="ghost" title="Close summary.">Close</button>
+              </div>
+            </div>
+            <textarea id="summaryOutput" rows="12" readonly></textarea>
+          </div>
+        </div>
 
         <section class="panel chart-panel">
           <div class="chart-header">

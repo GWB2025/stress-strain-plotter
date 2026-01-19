@@ -268,6 +268,75 @@ textarea.has-data {
   flex-wrap: wrap;
 }
 
+.summary-options {
+  margin-top: 10px;
+}
+
+.summary-panel {
+  position: fixed;
+  inset: 0;
+  background: rgba(246, 239, 230, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 20;
+}
+
+.summary-card {
+  width: min(720px, 100%);
+  background: #fffaf1;
+  border: 1px solid #d9c9b0;
+  border-radius: 18px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+  padding: 20px 20px 16px;
+}
+
+.summary-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.summary-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.summary-actions {
+  display: flex;
+  gap: 10px;
+}
+
+#summaryOutput {
+  width: 100%;
+  min-height: 220px;
+  border-radius: 12px;
+  border: 1px solid #d9c9b0;
+  padding: 12px;
+  background: #fef6ea;
+  font-family: "Courier New", ui-monospace, monospace;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  color: #1d1a12;
+  resize: vertical;
+}
+
+@media (max-width: 720px) {
+  .summary-card {
+    padding: 16px;
+  }
+
+  .summary-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
 .data-table {
   margin-top: 16px;
   border: 1px solid rgba(29, 26, 18, 0.12);
