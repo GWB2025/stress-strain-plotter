@@ -1658,8 +1658,26 @@ function buildSummaryMessage(source) {
   }
 
   const unit = stressUnitSelect.value;
-  const selectedPairs = elasticLineOverride || elasticRangeOverride || null;
   const summaryRangeOnly = !!summaryRangeToggle?.checked;
+  const rangeAxis =
+    !lineRange.active && strainRangeActive
+      ? "strain"
+      : !lineRange.active && stressRangeActive
+      ? "stress"
+      : null;
+  const activeRange =
+    rangeAxis === "strain" ? strainRange : rangeAxis === "stress" ? stressRange : null;
+
+  let selectedPairs = null;
+  let selectedLabel = null;
+  if (lineRange.active) {
+    selectedPairs = lineRange.pairs;
+    selectedLabel = "Line range";
+  } else if (rangeAxis && activeRange && (activeRange.min !== null || activeRange.max !== null)) {
+    selectedPairs = applyRange(parsed.pairs, activeRange, rangeAxis).pairs;
+    selectedLabel = rangeAxis === "strain" ? "Strain range" : "Stress range";
+  }
+
   const summaryScope = summaryRangeOnly
     ? selectedPairs
       ? "Selected range"
@@ -1675,11 +1693,10 @@ function buildSummaryMessage(source) {
   const plasticStrainStep = readPlasticStrainStep();
   const hardening = summaryFit ? estimatePowerHardening(hardeningPairs, summaryFit) : null;
   const yieldResult = summaryFit ? estimateOffsetYield(summaryPairs, summaryFit) : null;
-  const fitSource = elasticLineOverride
-    ? `Line range (${elasticLineOverride.length} points)`
-    : elasticRangeOverride
-    ? `${elasticRangeAxis === "strain" ? "Strain" : "Stress"} range (${elasticRangeOverride.length} points)`
-    : "Auto-selection";
+  const fitSource =
+    summaryRangeOnly && selectedPairs && selectedLabel
+      ? `${selectedLabel} (${selectedPairs.length} points)`
+      : "Auto-selection";
 
   const stressRangeLabel = stressRangeActive
     ? `${stressRange.min ?? "-inf"} to ${stressRange.max ?? "inf"} ${unit}`
@@ -1746,7 +1763,7 @@ function buildSummaryMessage(source) {
     `Stress range: ${stressRangeLabel}`,
     `Strain range: ${strainRangeLabel}`,
     `Line range: ${lineLabel}`,
-    `Power/plastic scope: ${summaryScope}`,
+    `Summary scope: ${summaryScope}`,
     `UTS: ${utsText}`,
     `Tangent modulus: ${tangentSummaryText}`,
     `Yield (0.2%): ${yieldSummaryText} (auto elastic fit)`,
@@ -2486,8 +2503,11 @@ selectAllLineRangeBtn.addEventListener("click", () => {
   lineFromInput.value = "1";
   lineToInput.value = String(maxLine);
   lineRangeActive = true;
+  stressRangeActive = false;
+  strainRangeActive = false;
   elasticRangeOverride = null;
   elasticRangeAxis = null;
+  elasticLineOverride = null;
   regionFitMode = "default";
   hardeningWarningMode = "popup";
   setFeedback("Range inputs overridden to full data range.");
