@@ -43,6 +43,13 @@ Rules:
 
    http://127.0.0.1:8000/index.html
 
+## Diagnostics logging
+
+Use the **Diagnostics** panel to capture key presses, input changes, button clicks, and runtime errors while reproducing issues.
+
+- When running via `python server.py`, events are appended to `stress-stain.log` (gitignored).
+- Use **Download log** if you need to share the current session logs.
+
 ## Key Controls
 
 - Stress units: choose Pa / MPa / GPa for the stress column.

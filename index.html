@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Stress-Strain Plotter</title>
-    <link rel="stylesheet" href="styles.css?v=20260120-2" />
+    <link rel="stylesheet" href="styles.css?v=20260120-3" />
   </head>
   <body>
     <div class="page">
@@ -338,6 +338,30 @@
               Summary uses selected range
             </label>
           </div>
+
+          <div class="file-block">
+            <label title="Diagnostics logging for troubleshooting.">Diagnostics</label>
+            <label class="checkbox-row" title="Enable diagnostics logging (recommended only while reproducing a bug).">
+              <input id="diagnosticsEnabled" type="checkbox" />
+              Enable diagnostics logging
+            </label>
+            <label class="checkbox-row" title="Log all key presses (can be noisy).">
+              <input id="diagnosticsLogKeys" type="checkbox" />
+              Log key presses
+            </label>
+            <label class="checkbox-row" title="Include full contents of the main data textbox (can create large logs).">
+              <input id="diagnosticsIncludeDataInput" type="checkbox" />
+              Include full data textbox in logs
+            </label>
+            <div class="range-actions">
+              <button id="diagnosticsDownloadLogBtn" class="ghost" title="Download a copy of the current session log.">Download log</button>
+              <button id="diagnosticsClearLogBtn" class="ghost" title="Clear the in-browser session log.">Clear log</button>
+            </div>
+            <p id="diagnosticsStatus" class="file-helper">
+              Diagnostics: OFF
+            </p>
+            <p class="file-helper">When running via <code>python server.py</code>, logs are also written to <code>stress-stain.log</code>.</p>
+          </div>
           <p id="feedback" class="feedback" aria-live="polite"></p>
           <p id="selectionStatus" class="status">Fit source: auto-selection.</p>
           <p class="status">Legend: <span class="marker">>></span> = within active range</p>
@@ -473,6 +497,6 @@
       </main>
     </div>
 
-    <script src="app.js?v=20260120-2"></script>
+    <script src="app.js?v=20260120-3"></script>
   </body>
 </html>

@@ -69,6 +69,12 @@ const dataPlotPoints = document.querySelector("#dataPlotPoints");
 const resetBtn = document.querySelector("#resetBtn");
 const summaryBtn = document.querySelector("#summaryBtn");
 const summaryRangeToggle = document.querySelector("#summaryRangeToggle");
+const diagnosticsEnabledToggle = document.querySelector("#diagnosticsEnabled");
+const diagnosticsLogKeysToggle = document.querySelector("#diagnosticsLogKeys");
+const diagnosticsIncludeDataToggle = document.querySelector("#diagnosticsIncludeDataInput");
+const diagnosticsDownloadLogBtn = document.querySelector("#diagnosticsDownloadLogBtn");
+const diagnosticsClearLogBtn = document.querySelector("#diagnosticsClearLogBtn");
+const diagnosticsStatus = document.querySelector("#diagnosticsStatus");
 const feedback = document.querySelector("#feedback");
 const summary = document.querySelector("#summary");
 const summaryPanel = document.querySelector("#summaryPanel");
@@ -163,6 +169,528 @@ const referenceDataset = {
   path: "Al2024-T351.csv",
   hasHeader: true,
 };
+
+const APP_BUILD = "20260120-3";
+
+const diagnostics = createDiagnosticsLogger({
+  build: APP_BUILD,
+  endpoint: "/__log",
+  controls: {
+    enabled: diagnosticsEnabledToggle,
+    logKeys: diagnosticsLogKeysToggle,
+    includeDataInput: diagnosticsIncludeDataToggle,
+    download: diagnosticsDownloadLogBtn,
+    clear: diagnosticsClearLogBtn,
+    status: diagnosticsStatus,
+  },
+});
+
+window.stressStainDiagnostics = diagnostics;
+
+function hashStringFNV1a32(value) {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function describeLogTarget(target) {
+  if (!target) {
+    return null;
+  }
+  if (!(target instanceof Element)) {
+    return { type: typeof target };
+  }
+  return {
+    id: target.id || null,
+    name: target.getAttribute("name") || null,
+    tag: target.tagName ? target.tagName.toLowerCase() : null,
+    inputType: target instanceof HTMLInputElement ? target.type : null,
+  };
+}
+
+function summarizeLoggedValue(value, { maxFull = 200, maxPreview = 120 } = {}) {
+  const text = value == null ? "" : String(value);
+  const length = text.length;
+  if (length <= maxFull) {
+    return { value: text, length, hash: hashStringFNV1a32(text) };
+  }
+
+  const preview = maxPreview > 0 ? text.slice(0, maxPreview) : "";
+  const tail = maxPreview > 0 ? text.slice(Math.max(0, length - maxPreview)) : "";
+  const sample = `${length}:${preview}|${tail}`;
+  return {
+    length,
+    hash: hashStringFNV1a32(sample),
+    preview: preview || null,
+    tail: tail || null,
+  };
+}
+
+function summarizeInputValue(target, value, includeDataInput) {
+  const isDataInput = target instanceof Element && target.id === "dataInput";
+  if (isDataInput && !includeDataInput) {
+    const text = value == null ? "" : String(value);
+    const length = text.length;
+    const sampleSize = 200;
+    const preview = text.slice(0, sampleSize);
+    const tail = text.slice(Math.max(0, length - sampleSize));
+    const sample = `${length}:${preview}|${tail}`;
+    return { length, hash: hashStringFNV1a32(sample), redacted: true };
+  }
+  return summarizeLoggedValue(value);
+}
+
+function setControlValue(control, value, reason) {
+  if (!control) {
+    return;
+  }
+  const next = value == null ? "" : String(value);
+  const previous = control.value;
+  control.value = next;
+  if (previous !== next) {
+    diagnostics.log("control_set_value", {
+      target: describeLogTarget(control),
+      reason,
+      previous: summarizeInputValue(control, previous, diagnostics.includeDataInput()),
+      next: summarizeInputValue(control, next, diagnostics.includeDataInput()),
+    });
+  }
+}
+
+function setCheckboxChecked(control, checked, reason) {
+  if (!control) {
+    return;
+  }
+  const next = Boolean(checked);
+  const previous = control.checked;
+  control.checked = next;
+  if (previous !== next) {
+    diagnostics.log("control_set_checked", {
+      target: describeLogTarget(control),
+      reason,
+      previous,
+      next,
+    });
+  }
+}
+
+function setSelectValue(control, value, reason) {
+  setControlValue(control, value, reason);
+}
+
+function setDisabled(control, disabled, reason) {
+  if (!control) {
+    return;
+  }
+  const next = Boolean(disabled);
+  const previous = control.disabled;
+  control.disabled = next;
+  if (previous !== next) {
+    diagnostics.log("control_set_disabled", {
+      target: describeLogTarget(control),
+      reason,
+      previous,
+      next,
+    });
+  }
+}
+
+function createDiagnosticsLogger({ build, endpoint, controls } = {}) {
+  const sessionId =
+    typeof crypto !== "undefined" && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
+  const storageKeys = {
+    enabled: "stressStain.diagnostics.enabled",
+    logKeys: "stressStain.diagnostics.logKeys",
+    includeDataInput: "stressStain.diagnostics.includeDataInput",
+  };
+
+  const buffer = [];
+  const history = [];
+  const maxBufferedEvents = 2500;
+  const maxHistoryEvents = 15000;
+  const flushBatchSize = 200;
+  const flushDelayMs = 2500;
+  const retryDelayMs = 30000;
+
+  let enabled = false;
+  let logKeys = true;
+  let includeDataInput = false;
+  let flushTimer = null;
+  let lastSendFailureAt = 0;
+  let serverStatus = "unknown";
+
+  function readStoredBool(key, fallback) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw === null) {
+        return fallback;
+      }
+      return raw === "1" || raw === "true";
+    } catch {
+      return fallback;
+    }
+  }
+
+  function storeBool(key, value) {
+    try {
+      localStorage.setItem(key, value ? "1" : "0");
+    } catch {
+      // ignore storage failures (private mode, etc.)
+    }
+  }
+
+  function updateStatus() {
+    if (!controls || !controls.status) {
+      return;
+    }
+    const buffered = buffer.length;
+    const total = history.length;
+    const serverLabel =
+      serverStatus === "ok" ? "server" : serverStatus === "offline" ? "offline" : "unknown";
+    const keyLabel = enabled ? (logKeys ? "keys on" : "keys off") : "keys off";
+    const dataLabel = includeDataInput ? "data included" : "data redacted";
+    controls.status.textContent = `Diagnostics: ${enabled ? "ON" : "OFF"} | ${keyLabel} | ${dataLabel} | ${serverLabel} | ${buffered} queued / ${total} total | ${sessionId}`;
+  }
+
+  function push(eventType, data) {
+    if (!enabled) {
+      return;
+    }
+    const entry = {
+      ts: new Date().toISOString(),
+      sessionId,
+      build,
+      type: eventType,
+      data,
+    };
+
+    buffer.push(entry);
+    history.push(entry);
+    if (history.length > maxHistoryEvents) {
+      history.splice(0, history.length - maxHistoryEvents);
+    }
+    if (buffer.length > maxBufferedEvents) {
+      const overflow = buffer.length - maxBufferedEvents;
+      buffer.splice(0, overflow + 1);
+      const marker = {
+        ts: new Date().toISOString(),
+        sessionId,
+        build,
+        type: "diagnostics_dropped",
+        data: { dropped: overflow + 1, maxBufferedEvents },
+      };
+      buffer.push(marker);
+      history.push(marker);
+      if (history.length > maxHistoryEvents) {
+        history.splice(0, history.length - maxHistoryEvents);
+      }
+    }
+
+    updateStatus();
+    scheduleFlush();
+  }
+
+  function scheduleFlush() {
+    if (!enabled) {
+      return;
+    }
+    if (flushTimer) {
+      return;
+    }
+    flushTimer = window.setTimeout(() => {
+      flushTimer = null;
+      flush("timer");
+    }, flushDelayMs);
+  }
+
+  async function flush(reason) {
+    if (!enabled) {
+      return;
+    }
+    if (!endpoint || buffer.length === 0) {
+      updateStatus();
+      return;
+    }
+
+    const now = Date.now();
+    if (serverStatus === "offline" && now - lastSendFailureAt < retryDelayMs) {
+      updateStatus();
+      return;
+    }
+
+    const events = buffer.slice(0, Math.min(buffer.length, flushBatchSize));
+    const payload = { sessionId, build, reason, events };
+
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        keepalive: true,
+      });
+
+      if (!response.ok) {
+        throw new Error(`log endpoint responded ${response.status}`);
+      }
+
+      buffer.splice(0, events.length);
+      serverStatus = "ok";
+    } catch (error) {
+      serverStatus = "offline";
+      lastSendFailureAt = now;
+    } finally {
+      updateStatus();
+    }
+  }
+
+  function clear() {
+    buffer.length = 0;
+    history.length = 0;
+    updateStatus();
+  }
+
+  function download() {
+    const content = history.map((entry) => JSON.stringify(entry)).join("\n");
+    const blob = new Blob([`${content}\n`], { type: "application/x-ndjson;charset=utf-8" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `stress-stain-diagnostics-${sessionId}.jsonl`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(link.href);
+  }
+
+  function setEnabled(next) {
+    enabled = Boolean(next);
+    storeBool(storageKeys.enabled, enabled);
+    updateStatus();
+
+    if (enabled) {
+      push("diagnostics_enabled", { enabled: true });
+      push("session_start", {
+        href: window.location.href,
+        userAgent: navigator.userAgent,
+        platform: navigator.platform,
+        language: navigator.language,
+        timezoneOffsetMinutes: new Date().getTimezoneOffset(),
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      });
+      flush("enable");
+    }
+  }
+
+  function setLogKeys(next) {
+    logKeys = Boolean(next);
+    storeBool(storageKeys.logKeys, logKeys);
+    updateStatus();
+  }
+
+  function setIncludeDataInput(next) {
+    includeDataInput = Boolean(next);
+    storeBool(storageKeys.includeDataInput, includeDataInput);
+    updateStatus();
+  }
+
+  enabled = readStoredBool(storageKeys.enabled, false);
+  logKeys = readStoredBool(storageKeys.logKeys, true);
+  includeDataInput = readStoredBool(storageKeys.includeDataInput, false);
+
+  if (controls && controls.enabled) {
+    controls.enabled.checked = enabled;
+    controls.enabled.addEventListener("change", () => setEnabled(controls.enabled.checked));
+  }
+  if (controls && controls.logKeys) {
+    controls.logKeys.checked = logKeys;
+    controls.logKeys.addEventListener("change", () => setLogKeys(controls.logKeys.checked));
+  }
+  if (controls && controls.includeDataInput) {
+    controls.includeDataInput.checked = includeDataInput;
+    controls.includeDataInput.addEventListener("change", () =>
+      setIncludeDataInput(controls.includeDataInput.checked),
+    );
+  }
+  if (controls && controls.download) {
+    controls.download.addEventListener("click", () => download());
+  }
+  if (controls && controls.clear) {
+    controls.clear.addEventListener("click", () => clear());
+  }
+
+  document.addEventListener(
+    "keydown",
+    (event) => {
+      if (!enabled || !logKeys) {
+        return;
+      }
+      push("keydown", {
+        key: event.key,
+        code: event.code,
+        repeat: event.repeat,
+        altKey: event.altKey,
+        ctrlKey: event.ctrlKey,
+        shiftKey: event.shiftKey,
+        metaKey: event.metaKey,
+        target: describeLogTarget(event.target),
+      });
+    },
+    true,
+  );
+
+  document.addEventListener(
+    "input",
+    (event) => {
+      if (!enabled) {
+        return;
+      }
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) {
+        return;
+      }
+      push("input", {
+        inputType: event.inputType || null,
+        target: describeLogTarget(target),
+        value: summarizeInputValue(target, target.value, includeDataInput),
+      });
+    },
+    true,
+  );
+
+  document.addEventListener(
+    "change",
+    (event) => {
+      if (!enabled) {
+        return;
+      }
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) {
+        return;
+      }
+      if (target instanceof HTMLInputElement && (target.type === "checkbox" || target.type === "radio")) {
+        push("change", {
+          target: describeLogTarget(target),
+          checked: target.checked,
+        });
+        return;
+      }
+      push("change", {
+        target: describeLogTarget(target),
+        value: summarizeInputValue(target, target.value, includeDataInput),
+      });
+    },
+    true,
+  );
+
+  document.addEventListener(
+    "click",
+    (event) => {
+      if (!enabled) {
+        return;
+      }
+      const target = event.target;
+      if (!(target instanceof Element)) {
+        return;
+      }
+      if (target instanceof HTMLButtonElement) {
+        push("click", {
+          target: describeLogTarget(target),
+          disabled: target.disabled,
+          text: target.textContent ? target.textContent.trim().slice(0, 80) : null,
+        });
+      }
+    },
+    true,
+  );
+
+  document.addEventListener(
+    "paste",
+    (event) => {
+      if (!enabled) {
+        return;
+      }
+      push("paste", { target: describeLogTarget(event.target) });
+    },
+    true,
+  );
+
+  window.addEventListener("error", (event) => {
+    push("error", {
+      message: event.message,
+      filename: event.filename,
+      lineno: event.lineno,
+      colno: event.colno,
+      stack: event.error && event.error.stack ? String(event.error.stack) : null,
+    });
+  });
+
+  window.addEventListener("unhandledrejection", (event) => {
+    const reason = event.reason;
+    push("unhandledrejection", {
+      reasonType: reason && reason.name ? reason.name : typeof reason,
+      message: reason && reason.message ? String(reason.message) : String(reason),
+      stack: reason && reason.stack ? String(reason.stack) : null,
+    });
+  });
+
+  const attributeObserverTargets = [
+    hasHeaderCheckbox,
+    selectPlasticRangeBtn,
+    selectPlasticStrainRangeBtn,
+    selectPlasticLineRangeBtn,
+    applyRangeBtn,
+    applyStrainRangeBtn,
+    applyLineRangeBtn,
+    buildPowerBtn,
+    plotPowerBtn,
+  ].filter(Boolean);
+
+  if (typeof MutationObserver !== "undefined" && attributeObserverTargets.length > 0) {
+    const observer = new MutationObserver((mutations) => {
+      if (!enabled) {
+        return;
+      }
+      for (const mutation of mutations) {
+        if (mutation.type !== "attributes" || mutation.attributeName !== "disabled") {
+          continue;
+        }
+        const target = mutation.target;
+        if (!(target instanceof HTMLElement)) {
+          continue;
+        }
+        push("disabled_changed", {
+          target: describeLogTarget(target),
+          disabled: target.disabled,
+        });
+      }
+    });
+
+    attributeObserverTargets.forEach((target) =>
+      observer.observe(target, { attributes: true, attributeFilter: ["disabled"] }),
+    );
+  }
+
+  window.addEventListener("pagehide", () => flush("pagehide"));
+
+  updateStatus();
+  if (enabled) {
+    push("session_resume", { href: window.location.href });
+    flush("resume");
+  }
+
+  return {
+    log: push,
+    flush,
+    clear,
+    download,
+    includeDataInput: () => includeDataInput,
+  };
+}
 
 function normalizeRaw(raw) {
   const withoutDecorations = stripDecorations(raw);
@@ -648,24 +1176,30 @@ function renderChart(pairs, overridePairs, shouldAutoFill) {
 
   if (regionFitMode === "plastic") {
     if (elasticModulus.error) {
-      plasticOutput.value = "";
+      setControlValue(plasticOutput, "", "plastic_output");
       setFeedback(elasticModulus.error);
     } else if (plasticStrainStep.error) {
-      plasticOutput.value = "";
+      setControlValue(plasticOutput, "", "plastic_output");
       if (document.activeElement !== plasticStrainStepInput) {
         setFeedback(plasticStrainStep.error);
       }
     } else if (!elasticModulus.value) {
-      plasticOutput.value = "Enter E to compute plastic strain.";
+      setControlValue(plasticOutput, "Enter E to compute plastic strain.", "plastic_output");
     } else if (truePlasticPairs.length === 0) {
-      plasticOutput.value = "Plastic region data not available.";
+      setControlValue(plasticOutput, "Plastic region data not available.", "plastic_output");
     } else {
       const cubic = cubicFit(truePlasticPairs);
       if (!cubic) {
-        plasticOutput.value = "Unable to fit cubic to plastic region data.";
+        setControlValue(
+          plasticOutput,
+          "Unable to fit cubic to plastic region data.",
+          "plastic_output",
+        );
       } else {
         const yieldTrue = yieldResult ? engineeringPairToTruePair(yieldResult) : null;
-        plasticOutput.value = buildPlasticOutput(
+        setControlValue(
+          plasticOutput,
+          buildPlasticOutput(
           truePlasticPairs,
           elasticModulus.value,
           stressUnit,
@@ -673,11 +1207,13 @@ function renderChart(pairs, overridePairs, shouldAutoFill) {
           yieldTrue ? yieldTrue.x : null,
           yieldTrue ? yieldTrue.y : null,
           plasticStrainStep.value,
+          ),
+          "plastic_output",
         );
       }
     }
   } else {
-    plasticOutput.value = "";
+    setControlValue(plasticOutput, "", "plastic_output");
   }
 
   const plasticData = parsePlasticColumns(source);
@@ -1587,6 +2123,7 @@ function setFeedback(message) {
   feedback.textContent = message;
   if (message && message !== lastPopupMessage) {
     lastPopupMessage = message;
+    diagnostics.log("feedback_alert", { message });
     alert(message);
   }
   if (!message) {
@@ -1797,7 +2334,7 @@ function plotFromRaw(raw) {
   lastPlottedSource = cleaned;
   const canonical = cleaned;
   if (hasHeaderCheckbox && sourceChanged) {
-    hasHeaderCheckbox.checked = detectHeader(canonical);
+    setCheckboxChecked(hasHeaderCheckbox, detectHeader(canonical), "auto_detect_header");
   }
   const result = parseNumbers(canonical);
   if (result.error) {
@@ -2019,11 +2556,11 @@ loadPowerRowBtn.addEventListener("click", () => {
     setFeedback(parsed.error);
     return;
   }
-  powerYieldInput.value = formatInputValue(parsed.yieldStress, 2);
-  powerModulusInput.value = formatInputValue(parsed.modulus, 2);
-  powerUtsInput.value = formatInputValue(parsed.uts, 2);
-  powerCoeffInput.value = formatInputValue(parsed.hardening, 2);
-  powerExponentInput.value = formatInputValue(parsed.exponent, 4);
+  setControlValue(powerYieldInput, formatInputValue(parsed.yieldStress, 2), "load_power_row");
+  setControlValue(powerModulusInput, formatInputValue(parsed.modulus, 2), "load_power_row");
+  setControlValue(powerUtsInput, formatInputValue(parsed.uts, 2), "load_power_row");
+  setControlValue(powerCoeffInput, formatInputValue(parsed.hardening, 2), "load_power_row");
+  setControlValue(powerExponentInput, formatInputValue(parsed.exponent, 4), "load_power_row");
   const suffix = parsed.ignoredPoisson ? " Poisson ignored." : "";
   const label = parsed.material ? `Loaded ${parsed.material}.` : "Row loaded.";
   setPowerOutputStatus(`${label}${suffix}`);
@@ -2045,7 +2582,7 @@ buildPowerBtn.addEventListener("click", () => {
   }
   lastPowerDataset = result;
   powerDatasetDirty = false;
-  powerOutput.value = result.csv;
+  setControlValue(powerOutput, result.csv, "build_power_dataset");
   const spacingLabel = inputs.spacing === "strain" ? "even strain" : "even stress";
   setPowerOutputStatus(`Generated ${result.count} points (${spacingLabel}).`);
   renderPowerDatasetChart(result.rows, result.unit);
@@ -2087,7 +2624,7 @@ plotPowerBtn.addEventListener("click", () => {
     }
   }
 
-  hasHeaderCheckbox.checked = false;
+  setCheckboxChecked(hasHeaderCheckbox, false, "plot_generated_dataset");
   stressRangeActive = false;
   strainRangeActive = false;
   lineRangeActive = false;
@@ -2095,7 +2632,7 @@ plotPowerBtn.addEventListener("click", () => {
   elasticRangeOverride = null;
   elasticRangeAxis = null;
   regionFitMode = "default";
-  input.value = formatted;
+  setControlValue(input, formatted, "plot_generated_dataset");
   plotFromRaw(formatted);
   setFeedback("Loaded generated dataset into the plot.");
 });
@@ -2172,8 +2709,8 @@ applyRangeBtn.addEventListener("click", () => {
 });
 
 clearRangeBtn.addEventListener("click", () => {
-  stressMinInput.value = "";
-  stressMaxInput.value = "";
+  setControlValue(stressMinInput, "", "clear_stress_range");
+  setControlValue(stressMaxInput, "", "clear_stress_range");
   stressRangeActive = false;
   regionFitMode = "default";
   refreshFromSource();
@@ -2194,8 +2731,8 @@ selectAllRangeBtn.addEventListener("click", () => {
   const values = result.pairs.map((pair) => pair.y);
   const min = Math.min(...values);
   const max = Math.max(...values);
-  stressMinInput.value = String(min);
-  stressMaxInput.value = String(max);
+  setControlValue(stressMinInput, String(min), "select_all_stress_range");
+  setControlValue(stressMaxInput, String(max), "select_all_stress_range");
   stressRangeActive = true;
   strainRangeActive = false;
   lineRangeActive = false;
@@ -2223,8 +2760,8 @@ selectYieldRangeBtn.addEventListener("click", () => {
     setFeedback("Unable to determine yield point from current data.");
     return;
   }
-  stressMinInput.value = String(minStress(parsed.pairs));
-  stressMaxInput.value = String(yieldPointData.y);
+  setControlValue(stressMinInput, String(minStress(parsed.pairs)), "select_yield_stress_range");
+  setControlValue(stressMaxInput, String(yieldPointData.y), "select_yield_stress_range");
   stressRangeActive = true;
   strainRangeActive = false;
   lineRangeActive = false;
@@ -2251,8 +2788,8 @@ selectUtsRangeBtn.addEventListener("click", () => {
     (max, pair) => (pair.y > max.y ? pair : max),
     parsed.pairs[0],
   );
-  stressMinInput.value = String(minStress(parsed.pairs));
-  stressMaxInput.value = String(utsPoint.y);
+  setControlValue(stressMinInput, String(minStress(parsed.pairs)), "select_uts_stress_range");
+  setControlValue(stressMaxInput, String(utsPoint.y), "select_uts_stress_range");
   stressRangeActive = true;
   strainRangeActive = false;
   lineRangeActive = false;
@@ -2278,10 +2815,10 @@ selectPlasticRangeBtn.addEventListener("click", () => {
   const maxStress = Math.max(...parsed.pairs.map((pair) => pair.y));
   const yieldPointData = estimateYieldPoint(parsed.pairs);
   if (!yieldPointData) {
-    stressMinInput.value = String(minStress(parsed.pairs));
-    stressMaxInput.value = String(maxStress);
+    setControlValue(stressMinInput, String(minStress(parsed.pairs)), "select_plastic_stress_range");
+    setControlValue(stressMaxInput, String(maxStress), "select_plastic_stress_range");
     if (plasticStrainStepInput) {
-      plasticStrainStepInput.value = "0.005";
+      setControlValue(plasticStrainStepInput, "0.005", "select_plastic_stress_range");
     }
     stressRangeActive = true;
     strainRangeActive = false;
@@ -2294,10 +2831,10 @@ selectPlasticRangeBtn.addEventListener("click", () => {
     refreshFromSource();
     return;
   }
-  stressMinInput.value = String(yieldPointData.y);
-  stressMaxInput.value = String(maxStress);
+  setControlValue(stressMinInput, String(yieldPointData.y), "select_plastic_stress_range");
+  setControlValue(stressMaxInput, String(maxStress), "select_plastic_stress_range");
   if (plasticStrainStepInput) {
-    plasticStrainStepInput.value = "0.005";
+    setControlValue(plasticStrainStepInput, "0.005", "select_plastic_stress_range");
   }
   stressRangeActive = true;
   strainRangeActive = false;
@@ -2338,8 +2875,8 @@ applyStrainRangeBtn.addEventListener("click", () => {
 });
 
 clearStrainRangeBtn.addEventListener("click", () => {
-  strainMinInput.value = "";
-  strainMaxInput.value = "";
+  setControlValue(strainMinInput, "", "clear_strain_range");
+  setControlValue(strainMaxInput, "", "clear_strain_range");
   strainRangeActive = false;
   regionFitMode = "default";
   refreshFromSource();
@@ -2360,8 +2897,8 @@ selectAllStrainRangeBtn.addEventListener("click", () => {
   const values = result.pairs.map((pair) => pair.x);
   const min = Math.min(...values);
   const max = Math.max(...values);
-  strainMinInput.value = String(min);
-  strainMaxInput.value = String(max);
+  setControlValue(strainMinInput, String(min), "select_all_strain_range");
+  setControlValue(strainMaxInput, String(max), "select_all_strain_range");
   strainRangeActive = true;
   stressRangeActive = false;
   lineRangeActive = false;
@@ -2389,8 +2926,8 @@ selectYieldStrainRangeBtn.addEventListener("click", () => {
     setFeedback("Unable to determine yield point from current data.");
     return;
   }
-  strainMinInput.value = String(minStrain(parsed.pairs));
-  strainMaxInput.value = String(yieldPointData.x);
+  setControlValue(strainMinInput, String(minStrain(parsed.pairs)), "select_yield_strain_range");
+  setControlValue(strainMaxInput, String(yieldPointData.x), "select_yield_strain_range");
   strainRangeActive = true;
   stressRangeActive = false;
   lineRangeActive = false;
@@ -2417,8 +2954,8 @@ selectUtsStrainRangeBtn.addEventListener("click", () => {
     (max, pair) => (pair.y > max.y ? pair : max),
     parsed.pairs[0],
   );
-  strainMinInput.value = String(minStrain(parsed.pairs));
-  strainMaxInput.value = String(utsPoint.x);
+  setControlValue(strainMinInput, String(minStrain(parsed.pairs)), "select_uts_strain_range");
+  setControlValue(strainMaxInput, String(utsPoint.x), "select_uts_strain_range");
   strainRangeActive = true;
   stressRangeActive = false;
   lineRangeActive = false;
@@ -2444,10 +2981,10 @@ selectPlasticStrainRangeBtn.addEventListener("click", () => {
   const maxStrain = Math.max(...parsed.pairs.map((pair) => pair.x));
   const yieldPointData = estimateYieldPoint(parsed.pairs);
   if (!yieldPointData) {
-    strainMinInput.value = String(minStrain(parsed.pairs));
-    strainMaxInput.value = String(maxStrain);
+    setControlValue(strainMinInput, String(minStrain(parsed.pairs)), "select_plastic_strain_range");
+    setControlValue(strainMaxInput, String(maxStrain), "select_plastic_strain_range");
     if (plasticStrainStepInput) {
-      plasticStrainStepInput.value = "0.005";
+      setControlValue(plasticStrainStepInput, "0.005", "select_plastic_strain_range");
     }
     strainRangeActive = true;
     stressRangeActive = false;
@@ -2460,10 +2997,10 @@ selectPlasticStrainRangeBtn.addEventListener("click", () => {
     refreshFromSource();
     return;
   }
-  strainMinInput.value = String(yieldPointData.x);
-  strainMaxInput.value = String(maxStrain);
+  setControlValue(strainMinInput, String(yieldPointData.x), "select_plastic_strain_range");
+  setControlValue(strainMaxInput, String(maxStrain), "select_plastic_strain_range");
   if (plasticStrainStepInput) {
-    plasticStrainStepInput.value = "0.005";
+    setControlValue(plasticStrainStepInput, "0.005", "select_plastic_strain_range");
   }
   strainRangeActive = true;
   stressRangeActive = false;
@@ -2508,8 +3045,8 @@ applyLineRangeBtn.addEventListener("click", () => {
 });
 
 clearLineRangeBtn.addEventListener("click", () => {
-  lineFromInput.value = "";
-  lineToInput.value = "";
+  setControlValue(lineFromInput, "", "clear_line_range");
+  setControlValue(lineToInput, "", "clear_line_range");
   elasticLineOverride = null;
   lineRangeActive = false;
   regionFitMode = "default";
@@ -2529,8 +3066,8 @@ selectAllLineRangeBtn.addEventListener("click", () => {
     setFeedback("No data rows available to select.");
     return;
   }
-  lineFromInput.value = "1";
-  lineToInput.value = String(maxLine);
+  setControlValue(lineFromInput, "1", "select_all_line_range");
+  setControlValue(lineToInput, String(maxLine), "select_all_line_range");
   lineRangeActive = true;
   stressRangeActive = false;
   strainRangeActive = false;
@@ -2569,8 +3106,8 @@ selectYieldLineRangeBtn.addEventListener("click", () => {
     setFeedback("Unable to map yield point to a data row.");
     return;
   }
-  lineFromInput.value = "1";
-  lineToInput.value = String(yieldIndex + 1);
+  setControlValue(lineFromInput, "1", "select_yield_line_range");
+  setControlValue(lineToInput, String(yieldIndex + 1), "select_yield_line_range");
   lineRangeActive = true;
   stressRangeActive = false;
   strainRangeActive = false;
@@ -2598,8 +3135,8 @@ selectUtsLineRangeBtn.addEventListener("click", () => {
     setFeedback("Unable to map UTS to a data row.");
     return;
   }
-  lineFromInput.value = "1";
-  lineToInput.value = String(utsIndex + 1);
+  setControlValue(lineFromInput, "1", "select_uts_line_range");
+  setControlValue(lineToInput, String(utsIndex + 1), "select_uts_line_range");
   lineRangeActive = true;
   stressRangeActive = false;
   strainRangeActive = false;
@@ -2629,8 +3166,8 @@ selectPlasticLineRangeBtn.addEventListener("click", () => {
   }
   const yieldPointData = estimateYieldPoint(parsed.pairs);
   if (!yieldPointData) {
-    lineFromInput.value = "1";
-    lineToInput.value = String(lines.length);
+    setControlValue(lineFromInput, "1", "select_plastic_line_range");
+    setControlValue(lineToInput, String(lines.length), "select_plastic_line_range");
     lineRangeActive = true;
     stressRangeActive = false;
     strainRangeActive = false;
@@ -2648,8 +3185,8 @@ selectPlasticLineRangeBtn.addEventListener("click", () => {
     setFeedback("Unable to map plastic region to data rows.");
     return;
   }
-  lineFromInput.value = String(yieldIndex + 1);
-  lineToInput.value = String(utsIndex + 1);
+  setControlValue(lineFromInput, String(yieldIndex + 1), "select_plastic_line_range");
+  setControlValue(lineToInput, String(utsIndex + 1), "select_plastic_line_range");
   lineRangeActive = true;
   stressRangeActive = false;
   strainRangeActive = false;
@@ -2667,6 +3204,8 @@ fileInput.addEventListener("change", (event) => {
     return;
   }
 
+  diagnostics.log("file_selected", { name: file.name, size: file.size, type: file.type || null });
+
   if (file.size === 0) {
     setFeedback("The selected file is empty.");
     return;
@@ -2680,7 +3219,8 @@ fileInput.addEventListener("change", (event) => {
   const reader = new FileReader();
   reader.onload = () => {
     const text = String(reader.result || "");
-    if (text.trim().length === 0) {
+    const trimmed = text.trim();
+    if (trimmed.length === 0) {
       setFeedback("The selected file has no readable data.");
       return;
     }
@@ -2689,7 +3229,8 @@ fileInput.addEventListener("change", (event) => {
     if (referenceInfo) {
       referenceInfo.textContent = "Loads Al2024-T351.csv with its header row (MPa units).";
     }
-    plotFromRaw(text.trim());
+    setControlValue(input, trimmed, "file_upload");
+    plotFromRaw(trimmed);
   };
   reader.onerror = () => {
     setFeedback("Unable to read the file. Please try again.");
@@ -2710,47 +3251,47 @@ referenceBtn.addEventListener("click", () => {
 });
 
 resetBtn.addEventListener("click", () => {
-  input.value = "";
-  fileInput.value = "";
+  setControlValue(input, "", "reset");
+  setControlValue(fileInput, "", "reset");
   elasticRangeOverride = null;
   elasticLineOverride = null;
   stressRangeActive = false;
   strainRangeActive = false;
   lineRangeActive = false;
   selectionStatus.textContent = "Fit source: auto-selection.";
-  hasHeaderCheckbox.checked = false;
-  stressMinInput.value = "";
-  stressMaxInput.value = "";
-  strainMinInput.value = "";
-  strainMaxInput.value = "";
-  lineFromInput.value = "";
-  lineToInput.value = "";
-  elasticModulusInput.value = "";
-  plasticStrainStepInput.value = "";
+  setCheckboxChecked(hasHeaderCheckbox, false, "reset");
+  setControlValue(stressMinInput, "", "reset");
+  setControlValue(stressMaxInput, "", "reset");
+  setControlValue(strainMinInput, "", "reset");
+  setControlValue(strainMaxInput, "", "reset");
+  setControlValue(lineFromInput, "", "reset");
+  setControlValue(lineToInput, "", "reset");
+  setControlValue(elasticModulusInput, "", "reset");
+  setControlValue(plasticStrainStepInput, "", "reset");
   if (powerYieldInput) {
-    powerYieldInput.value = "";
+    setControlValue(powerYieldInput, "", "reset");
   }
   if (powerModulusInput) {
-    powerModulusInput.value = "";
+    setControlValue(powerModulusInput, "", "reset");
   }
   if (powerUtsInput) {
-    powerUtsInput.value = "";
+    setControlValue(powerUtsInput, "", "reset");
   }
   if (powerCoeffInput) {
-    powerCoeffInput.value = "";
+    setControlValue(powerCoeffInput, "", "reset");
   }
   if (powerExponentInput) {
-    powerExponentInput.value = "";
+    setControlValue(powerExponentInput, "", "reset");
   }
   if (powerPointsInput) {
-    powerPointsInput.value = "13";
+    setControlValue(powerPointsInput, "13", "reset");
   }
   if (powerRowInput) {
-    powerRowInput.value = "";
+    setControlValue(powerRowInput, "", "reset");
   }
   if (powerSpacingInputs && powerSpacingInputs.length > 0) {
-    powerSpacingInputs.forEach((input) => {
-      input.checked = input.value === "stress";
+    powerSpacingInputs.forEach((field) => {
+      setCheckboxChecked(field, field.value === "stress", "reset");
     });
   }
   lastPowerDataset = null;
@@ -2759,7 +3300,7 @@ resetBtn.addEventListener("click", () => {
   hardeningWarningMode = "silent";
   regionFitMode = "default";
   if (regionFitSelect) {
-    regionFitSelect.value = "linear";
+    setSelectValue(regionFitSelect, "linear", "reset");
   }
   setFeedback("");
   if (referenceInfo) {
@@ -2782,9 +3323,9 @@ resetBtn.addEventListener("click", () => {
   plasticSummary.textContent = "Awaiting plastic region data...";
   plasticPanel.style.display = "none";
   plasticChartShell.style.display = "none";
-  plasticOutput.value = "";
+  setControlValue(plasticOutput, "", "reset");
   if (powerOutput) {
-    powerOutput.value = "";
+    setControlValue(powerOutput, "", "reset");
   }
   setPowerOutputStatus("Awaiting inputs...");
   setPowerSummary("Awaiting inputs...", "Range: --");
@@ -3354,14 +3895,18 @@ function autoFillInputs(pairs, baseModulus, force) {
   }
 
   if (baseModulus && elasticModulusInput) {
-    elasticModulusInput.value = formatInputValue(baseModulus.slope, 2);
+    setControlValue(
+      elasticModulusInput,
+      formatInputValue(baseModulus.slope, 2),
+      "auto_fill_inputs",
+    );
   }
   if (plasticStrainStepInput) {
-    plasticStrainStepInput.value = "0.005";
+    setControlValue(plasticStrainStepInput, "0.005", "auto_fill_inputs");
   }
 
   if (powerPointsInput) {
-    powerPointsInput.value = "13";
+    setControlValue(powerPointsInput, "13", "auto_fill_inputs");
   }
 
   if (pairs && pairs.length > 1) {
@@ -3373,21 +3918,39 @@ function autoFillInputs(pairs, baseModulus, force) {
     const hardening = baseModulus ? estimatePowerHardening(pairs, baseModulus) : null;
 
     if (powerYieldInput) {
-      powerYieldInput.value = yieldPoint ? formatInputValue(yieldPoint.y, 2) : "";
+      setControlValue(
+        powerYieldInput,
+        yieldPoint ? formatInputValue(yieldPoint.y, 2) : "",
+        "auto_fill_inputs",
+      );
     }
     if (powerModulusInput) {
-      powerModulusInput.value = baseModulus ? formatInputValue(baseModulus.slope, 2) : "";
+      setControlValue(
+        powerModulusInput,
+        baseModulus ? formatInputValue(baseModulus.slope, 2) : "",
+        "auto_fill_inputs",
+      );
     }
     if (powerUtsInput) {
-      powerUtsInput.value = utsPoint ? formatInputValue(utsPoint.y, 2) : "";
+      setControlValue(
+        powerUtsInput,
+        utsPoint ? formatInputValue(utsPoint.y, 2) : "",
+        "auto_fill_inputs",
+      );
     }
     if (powerCoeffInput) {
-      powerCoeffInput.value =
-        hardening && hardening.K !== null ? formatInputValue(hardening.K, 2) : "";
+      setControlValue(
+        powerCoeffInput,
+        hardening && hardening.K !== null ? formatInputValue(hardening.K, 2) : "",
+        "auto_fill_inputs",
+      );
     }
     if (powerExponentInput) {
-      powerExponentInput.value =
-        hardening && hardening.n !== null ? formatInputValue(hardening.n, 4) : "";
+      setControlValue(
+        powerExponentInput,
+        hardening && hardening.n !== null ? formatInputValue(hardening.n, 4) : "",
+        "auto_fill_inputs",
+      );
     }
     markPowerDatasetDirty();
   }
@@ -3869,7 +4432,11 @@ function applyRange(pairs, range, axis) {
 }
 
 function updateDisplay(raw, range, lineRange, autoFitRange, rangeAxis) {
-  input.value = formatLinesWithNumbers(raw, range, lineRange, autoFitRange, rangeAxis);
+  setControlValue(
+    input,
+    formatLinesWithNumbers(raw, range, lineRange, autoFitRange, rangeAxis),
+    "decorate_data_input",
+  );
 }
 
 function formatLinesWithNumbers(raw, range, lineRange, autoFitRange, rangeAxis) {
@@ -4141,9 +4708,9 @@ function loadReferenceDataset() {
       }
       referenceLoaded = true;
       regionFitMode = "default";
-      stressUnitSelect.value = referenceDataset.unit;
-      hasHeaderCheckbox.checked = referenceDataset.hasHeader;
-      input.value = trimmed;
+      setSelectValue(stressUnitSelect, referenceDataset.unit, "load_reference_dataset");
+      setCheckboxChecked(hasHeaderCheckbox, referenceDataset.hasHeader, "load_reference_dataset");
+      setControlValue(input, trimmed, "load_reference_dataset");
       if (referenceInfo) {
         referenceInfo.textContent = `Loaded ${referenceDataset.path} (${referenceDataset.unit}).`;
       }
