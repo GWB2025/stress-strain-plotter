@@ -3094,6 +3094,18 @@ function buildPowerDataset(params, stressUnit) {
     }
   }
 
+  if (rows.length > 0) {
+    const strainOffset = rows[0].strain;
+    if (Number.isFinite(strainOffset)) {
+      rows.forEach((row) => {
+        const adjusted = row.strain - strainOffset;
+        row.strain = Math.abs(adjusted) < 1e-12 ? 0 : adjusted;
+      });
+    } else {
+      rows[0].strain = 0;
+    }
+  }
+
   const header = `Plastic strain for Ansys input,stress (${stressUnit})`;
   const lines = rows.map(
     (row) => `${row.strain.toFixed(6)},${row.stress.toFixed(2)}`,
