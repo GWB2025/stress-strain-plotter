@@ -146,6 +146,7 @@ let elasticRangeOverride = null;
 let elasticRangeAxis = null;
 let elasticLineOverride = null;
 let rawData = "";
+let lastPlottedSource = null;
 let stressRangeActive = false;
 let strainRangeActive = false;
 let lineRangeActive = false;
@@ -1792,8 +1793,11 @@ function refreshSummaryOutput() {
 }
 
 function plotFromRaw(raw) {
-  rawData = stripDecorations(raw);
-  if (hasHeaderCheckbox) {
+  const cleaned = stripDecorations(raw);
+  const sourceChanged = cleaned !== lastPlottedSource;
+  lastPlottedSource = cleaned;
+  rawData = cleaned;
+  if (hasHeaderCheckbox && sourceChanged) {
     hasHeaderCheckbox.checked = detectHeader(rawData);
   }
   const result = parseNumbers(rawData);
@@ -1884,7 +1888,9 @@ function plotFromRaw(raw) {
     elasticRangeAxis = null;
   }
 
-  setFeedback(warning);
+  if (warning) {
+    setFeedback(warning);
+  }
   const autoFillKey = buildAutoFillKey(fullPairs);
   const shouldAutoFill = autoFillKey !== lastAutoFillKey;
   if (shouldAutoFill) {
@@ -2272,12 +2278,25 @@ selectPlasticRangeBtn.addEventListener("click", () => {
     setFeedback(parsed.error);
     return;
   }
+  const maxStress = Math.max(...parsed.pairs.map((pair) => pair.y));
   const yieldPointData = estimateYieldPoint(parsed.pairs);
   if (!yieldPointData) {
-    setFeedback("Unable to determine yield point from current data.");
+    stressMinInput.value = String(minStress(parsed.pairs));
+    stressMaxInput.value = String(maxStress);
+    if (plasticStrainStepInput) {
+      plasticStrainStepInput.value = "0.005";
+    }
+    stressRangeActive = true;
+    strainRangeActive = false;
+    lineRangeActive = false;
+    elasticLineOverride = null;
+    elasticRangeAxis = null;
+    regionFitMode = "plastic";
+    hardeningWarningMode = "popup";
+    setFeedback("Yield point unavailable; range set to full data.");
+    refreshFromSource();
     return;
   }
-  const maxStress = Math.max(...parsed.pairs.map((pair) => pair.y));
   stressMinInput.value = String(yieldPointData.y);
   stressMaxInput.value = String(maxStress);
   if (plasticStrainStepInput) {
@@ -2425,12 +2444,25 @@ selectPlasticStrainRangeBtn.addEventListener("click", () => {
     setFeedback(parsed.error);
     return;
   }
+  const maxStrain = Math.max(...parsed.pairs.map((pair) => pair.x));
   const yieldPointData = estimateYieldPoint(parsed.pairs);
   if (!yieldPointData) {
-    setFeedback("Unable to determine yield point from current data.");
+    strainMinInput.value = String(minStrain(parsed.pairs));
+    strainMaxInput.value = String(maxStrain);
+    if (plasticStrainStepInput) {
+      plasticStrainStepInput.value = "0.005";
+    }
+    strainRangeActive = true;
+    stressRangeActive = false;
+    lineRangeActive = false;
+    elasticLineOverride = null;
+    elasticRangeAxis = null;
+    regionFitMode = "plastic";
+    hardeningWarningMode = "popup";
+    setFeedback("Yield point unavailable; range set to full data.");
+    refreshFromSource();
     return;
   }
-  const maxStrain = Math.max(...parsed.pairs.map((pair) => pair.x));
   strainMinInput.value = String(yieldPointData.x);
   strainMaxInput.value = String(maxStrain);
   if (plasticStrainStepInput) {
@@ -2593,14 +2625,24 @@ selectPlasticLineRangeBtn.addEventListener("click", () => {
     setFeedback(parsed.error);
     return;
   }
-  const yieldPointData = estimateYieldPoint(parsed.pairs);
-  if (!yieldPointData) {
-    setFeedback("Unable to determine yield point from current data.");
-    return;
-  }
   const lines = getDataLines(source);
   if (lines.length === 0) {
     setFeedback("No data rows available to select.");
+    return;
+  }
+  const yieldPointData = estimateYieldPoint(parsed.pairs);
+  if (!yieldPointData) {
+    lineFromInput.value = "1";
+    lineToInput.value = String(lines.length);
+    lineRangeActive = true;
+    stressRangeActive = false;
+    strainRangeActive = false;
+    elasticRangeOverride = null;
+    elasticRangeAxis = null;
+    regionFitMode = "plastic";
+    hardeningWarningMode = "popup";
+    setFeedback("Yield point unavailable; line range set to full data.");
+    refreshFromSource();
     return;
   }
   const yieldIndex = findYieldLineIndex(lines, yieldPointData);
