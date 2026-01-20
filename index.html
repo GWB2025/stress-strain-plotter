@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Stress-Strain Plotter</title>
-    <link rel="stylesheet" href="styles.css?v=20260120-3" />
+    <link rel="stylesheet" href="styles.css?v=20260120-4" />
   </head>
   <body>
     <div class="page">
@@ -234,6 +234,7 @@
             <div class="range-actions">
               <button id="buildPowerBtn" class="ghost" title="Generate the power hardening dataset.">Build dataset</button>
               <button id="plotPowerBtn" class="ghost" title="Use the generated dataset as the main plot data.">Plot dataset</button>
+              <button id="restorePreviousPlotBtn" class="ghost" title="Restore the dataset that was in the main plot before Plot dataset." disabled>Restore previous plot</button>
               <button id="savePowerBtn" class="ghost" title="Save the ANSYS dataset to a CSV file.">Save ANSYS CSV</button>
               <button id="savePowerPlotBtn" class="ghost" title="Save a plot-ready CSV with headers and units.">Save plot CSV</button>
             </div>
@@ -497,6 +498,6 @@
       </main>
     </div>
 
-    <script src="app.js?v=20260120-3"></script>
+    <script src="app.js?v=20260120-4"></script>
   </body>
 </html>

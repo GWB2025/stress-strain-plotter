@@ -51,6 +51,7 @@ const buildPowerBtn = document.querySelector("#buildPowerBtn");
 const plotPowerBtn = document.querySelector("#plotPowerBtn");
 const savePowerBtn = document.querySelector("#savePowerBtn");
 const savePowerPlotBtn = document.querySelector("#savePowerPlotBtn");
+const restorePreviousPlotBtn = document.querySelector("#restorePreviousPlotBtn");
 const powerGrid = document.querySelector("#powerGrid");
 const powerAxes = document.querySelector("#powerAxes");
 const powerCurveStrain = document.querySelector("#powerCurveStrain");
@@ -162,6 +163,7 @@ let regionFitMode = "default";
 let lastAutoFillKey = null;
 let lastPowerDataset = null;
 let powerDatasetDirty = false;
+let previousPlotSnapshot = null;
 
 const referenceDataset = {
   name: "Al2024-T351",
@@ -170,7 +172,7 @@ const referenceDataset = {
   hasHeader: true,
 };
 
-const APP_BUILD = "20260120-3";
+const APP_BUILD = "20260120-4";
 
 const diagnostics = createDiagnosticsLogger({
   build: APP_BUILD,
@@ -648,6 +650,7 @@ function createDiagnosticsLogger({ build, endpoint, controls } = {}) {
     applyLineRangeBtn,
     buildPowerBtn,
     plotPowerBtn,
+    restorePreviousPlotBtn,
   ].filter(Boolean);
 
   if (typeof MutationObserver !== "undefined" && attributeObserverTargets.length > 0) {
@@ -2452,6 +2455,67 @@ function refreshFromSource() {
   updateControlsState();
 }
 
+function capturePlotSnapshot(reason) {
+  const source = input ? input.value : "";
+  const snapshot = {
+    reason,
+    source,
+    hasHeader: hasHeaderCheckbox ? hasHeaderCheckbox.checked : false,
+    stressRangeActive,
+    strainRangeActive,
+    lineRangeActive,
+    stressMin: stressMinInput ? stressMinInput.value : "",
+    stressMax: stressMaxInput ? stressMaxInput.value : "",
+    strainMin: strainMinInput ? strainMinInput.value : "",
+    strainMax: strainMaxInput ? strainMaxInput.value : "",
+    lineFrom: lineFromInput ? lineFromInput.value : "",
+    lineTo: lineToInput ? lineToInput.value : "",
+    regionFitMode,
+    hardeningWarningMode,
+    referenceLoaded,
+  };
+
+  diagnostics.log("plot_snapshot_saved", {
+    reason,
+    source: input ? summarizeInputValue(input, source, diagnostics.includeDataInput()) : null,
+  });
+
+  return snapshot;
+}
+
+function applyPlotSnapshot(snapshot, reason) {
+  if (!snapshot) {
+    return;
+  }
+
+  stressRangeActive = Boolean(snapshot.stressRangeActive);
+  strainRangeActive = Boolean(snapshot.strainRangeActive);
+  lineRangeActive = Boolean(snapshot.lineRangeActive);
+  regionFitMode = snapshot.regionFitMode || "default";
+  hardeningWarningMode = snapshot.hardeningWarningMode || "silent";
+  referenceLoaded = Boolean(snapshot.referenceLoaded);
+  elasticLineOverride = null;
+  elasticRangeOverride = null;
+  elasticRangeAxis = null;
+
+  setControlValue(stressMinInput, snapshot.stressMin || "", reason);
+  setControlValue(stressMaxInput, snapshot.stressMax || "", reason);
+  setControlValue(strainMinInput, snapshot.strainMin || "", reason);
+  setControlValue(strainMaxInput, snapshot.strainMax || "", reason);
+  setControlValue(lineFromInput, snapshot.lineFrom || "", reason);
+  setControlValue(lineToInput, snapshot.lineTo || "", reason);
+  setCheckboxChecked(hasHeaderCheckbox, Boolean(snapshot.hasHeader), reason);
+  setControlValue(input, snapshot.source || "", reason);
+
+  const restoredSource = snapshot.source || "";
+  lastPlottedSource = stripDecorations(restoredSource);
+  if (restoredSource.trim().length > 0) {
+    plotFromRaw(restoredSource);
+  } else {
+    refreshFromSource();
+  }
+}
+
 stressUnitSelect.addEventListener("change", () => {
   refreshFromSource();
   if (lastPowerDataset && lastPowerDataset.rows && lastPowerDataset.rows.length > 0) {
@@ -2591,40 +2655,21 @@ buildPowerBtn.addEventListener("click", () => {
 
 plotPowerBtn.addEventListener("click", () => {
   const content = powerOutput.value.trim();
-  const canUseCached =
-    lastPowerDataset &&
-    !powerDatasetDirty &&
-    lastPowerDataset.rows &&
-    lastPowerDataset.rows.length >= 2 &&
-    lastPowerDataset.csv &&
-    content &&
-    content === lastPowerDataset.csv.trim();
-
-  let formatted = "";
-  if (canUseCached) {
-    formatted = lastPowerDataset.rows.map((row) => `${row.strain},${row.stress}`).join("\n");
-  } else {
-    if (!content) {
-      setFeedback("Build the dataset first.");
-      return;
-    }
-    const lines = content.split(/\r?\n/).slice(1);
-    formatted = lines
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-      .map((line) => {
-        const [strain, stress] = line.split(",");
-        return `${strain},${stress}`;
-      })
-      .join("\n");
-
-    if (!formatted) {
-      setFeedback("Dataset does not contain valid points.");
-      return;
-    }
+  if (!content) {
+    setFeedback("Build the dataset first.");
+    return;
+  }
+  const check = parseNumbers(content);
+  if (check.error) {
+    setFeedback(check.error);
+    return;
+  }
+  if (!check.pairs || check.pairs.length < 2) {
+    setFeedback("Dataset does not contain valid points.");
+    return;
   }
 
-  setCheckboxChecked(hasHeaderCheckbox, false, "plot_generated_dataset");
+  previousPlotSnapshot = capturePlotSnapshot("plot_power_dataset");
   stressRangeActive = false;
   strainRangeActive = false;
   lineRangeActive = false;
@@ -2632,10 +2677,24 @@ plotPowerBtn.addEventListener("click", () => {
   elasticRangeOverride = null;
   elasticRangeAxis = null;
   regionFitMode = "default";
-  setControlValue(input, formatted, "plot_generated_dataset");
-  plotFromRaw(formatted);
+  setControlValue(input, content, "plot_generated_dataset");
+  plotFromRaw(content);
   setFeedback("Loaded generated dataset into the plot.");
 });
+
+if (restorePreviousPlotBtn) {
+  restorePreviousPlotBtn.addEventListener("click", () => {
+    if (!previousPlotSnapshot) {
+      setFeedback("No previous plot to restore.");
+      return;
+    }
+    const current = capturePlotSnapshot("restore_previous_plot");
+    const snapshot = previousPlotSnapshot;
+    previousPlotSnapshot = current;
+    applyPlotSnapshot(snapshot, "restore_previous_plot");
+    setFeedback("Restored previous plot.");
+  });
+}
 
 savePowerBtn.addEventListener("click", () => {
   const content = powerOutput.value.trim();
@@ -4548,6 +4607,7 @@ function updateControlsState() {
   selectYieldLineRangeBtn.disabled = !hasData;
   selectUtsLineRangeBtn.disabled = !hasData;
   selectPlasticLineRangeBtn.disabled = !hasData;
+  setDisabled(restorePreviousPlotBtn, !previousPlotSnapshot, "update_controls_state");
 
   const rangeActive = stressRangeActive || strainRangeActive;
 
