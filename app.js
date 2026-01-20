@@ -145,7 +145,6 @@ const selectionConfig = {
 let elasticRangeOverride = null;
 let elasticRangeAxis = null;
 let elasticLineOverride = null;
-let rawData = "";
 let lastPlottedSource = null;
 let stressRangeActive = false;
 let strainRangeActive = false;
@@ -504,7 +503,7 @@ function renderPoints(pairs, xDomain, yDomain, box) {
 function renderChart(pairs, overridePairs, shouldAutoFill) {
   clearChart();
 
-  const source = rawData || stripDecorations(input.value);
+  const source = stripDecorations(input.value);
   const baseModulus = estimateYoungsModulus(pairs);
   const regionFit = overridePairs ? buildRegionFit(overridePairs) : baseModulus;
   const stressUnit = stressUnitSelect.value;
@@ -1784,7 +1783,7 @@ function refreshSummaryOutput() {
   if (!summaryOutput) {
     return null;
   }
-  const source = rawData || input.value;
+  const source = input.value;
   const message = buildSummaryMessage(source);
   if (message) {
     summaryOutput.value = message;
@@ -1796,11 +1795,11 @@ function plotFromRaw(raw) {
   const cleaned = stripDecorations(raw);
   const sourceChanged = cleaned !== lastPlottedSource;
   lastPlottedSource = cleaned;
-  rawData = cleaned;
+  const canonical = cleaned;
   if (hasHeaderCheckbox && sourceChanged) {
-    hasHeaderCheckbox.checked = detectHeader(rawData);
+    hasHeaderCheckbox.checked = detectHeader(canonical);
   }
-  const result = parseNumbers(rawData);
+  const result = parseNumbers(canonical);
   if (result.error) {
     setFeedback(result.error);
     renderDataTable([]);
@@ -1809,7 +1808,7 @@ function plotFromRaw(raw) {
     return;
   }
 
-  const lineRange = readLineRange(rawData);
+  const lineRange = readLineRange(canonical);
   if (lineRange.error) {
     setFeedback(lineRange.error);
     updateControlsState();
@@ -1846,7 +1845,7 @@ function plotFromRaw(raw) {
     !lineRange.active && !stressRangeActive && !strainRangeActive
       ? getAutoFitRange(result.pairs)
       : null;
-  updateDisplay(rawData, effectiveRange, lineRange, autoFitRange, rangeAxis);
+  updateDisplay(canonical, effectiveRange, lineRange, autoFitRange, rangeAxis);
 
   const fullPairs = result.pairs;
   const filtered = applyRange(fullPairs, effectiveRange, rangeAxis);
@@ -1908,7 +1907,7 @@ function plotFromRaw(raw) {
 }
 
 function refreshFromSource() {
-  const source = rawData || input.value;
+  const source = input.value;
   if (source.trim().length > 0) {
     plotFromRaw(source);
     return;
@@ -2096,10 +2095,8 @@ plotPowerBtn.addEventListener("click", () => {
   elasticRangeOverride = null;
   elasticRangeAxis = null;
   regionFitMode = "default";
-  rawData = formatted;
   input.value = formatted;
   plotFromRaw(formatted);
-  updateControlsState();
   setFeedback("Loaded generated dataset into the plot.");
 });
 
@@ -2155,7 +2152,7 @@ applyRangeBtn.addEventListener("click", () => {
   elasticRangeAxis = null;
   regionFitMode = "default";
   hardeningWarningMode = "popup";
-  const source = rawData || input.value;
+  const source = input.value;
   if (source.trim().length === 0) {
     setFeedback("Load data before applying a range.");
     stressRangeActive = false;
@@ -2184,7 +2181,7 @@ clearRangeBtn.addEventListener("click", () => {
 });
 
 selectAllRangeBtn.addEventListener("click", () => {
-  const source = rawData || input.value;
+  const source = input.value;
   if (source.trim().length === 0) {
     setFeedback("Load data before selecting all range data.");
     return;
@@ -2211,7 +2208,7 @@ selectAllRangeBtn.addEventListener("click", () => {
 });
 
 selectYieldRangeBtn.addEventListener("click", () => {
-  const source = rawData || input.value;
+  const source = input.value;
   if (source.trim().length === 0) {
     setFeedback("Load data before selecting yield range data.");
     return;
@@ -2240,7 +2237,7 @@ selectYieldRangeBtn.addEventListener("click", () => {
 });
 
 selectUtsRangeBtn.addEventListener("click", () => {
-  const source = rawData || input.value;
+  const source = input.value;
   if (source.trim().length === 0) {
     setFeedback("Load data before selecting UTS range data.");
     return;
@@ -2268,7 +2265,7 @@ selectUtsRangeBtn.addEventListener("click", () => {
 });
 
 selectPlasticRangeBtn.addEventListener("click", () => {
-  const source = rawData || input.value;
+  const source = input.value;
   if (source.trim().length === 0) {
     setFeedback("Load data before selecting plastic range data.");
     return;
@@ -2321,7 +2318,7 @@ applyStrainRangeBtn.addEventListener("click", () => {
   elasticRangeAxis = null;
   regionFitMode = "default";
   hardeningWarningMode = "popup";
-  const source = rawData || input.value;
+  const source = input.value;
   if (source.trim().length === 0) {
     setFeedback("Load data before applying a range.");
     strainRangeActive = false;
@@ -2350,7 +2347,7 @@ clearStrainRangeBtn.addEventListener("click", () => {
 });
 
 selectAllStrainRangeBtn.addEventListener("click", () => {
-  const source = rawData || input.value;
+  const source = input.value;
   if (source.trim().length === 0) {
     setFeedback("Load data before selecting all range data.");
     return;
@@ -2377,7 +2374,7 @@ selectAllStrainRangeBtn.addEventListener("click", () => {
 });
 
 selectYieldStrainRangeBtn.addEventListener("click", () => {
-  const source = rawData || input.value;
+  const source = input.value;
   if (source.trim().length === 0) {
     setFeedback("Load data before selecting yield range data.");
     return;
@@ -2406,7 +2403,7 @@ selectYieldStrainRangeBtn.addEventListener("click", () => {
 });
 
 selectUtsStrainRangeBtn.addEventListener("click", () => {
-  const source = rawData || input.value;
+  const source = input.value;
   if (source.trim().length === 0) {
     setFeedback("Load data before selecting UTS range data.");
     return;
@@ -2434,7 +2431,7 @@ selectUtsStrainRangeBtn.addEventListener("click", () => {
 });
 
 selectPlasticStrainRangeBtn.addEventListener("click", () => {
-  const source = rawData || input.value;
+  const source = input.value;
   if (source.trim().length === 0) {
     setFeedback("Load data before selecting plastic range data.");
     return;
@@ -2491,7 +2488,7 @@ applyLineRangeBtn.addEventListener("click", () => {
   elasticRangeAxis = null;
   regionFitMode = "default";
   hardeningWarningMode = "popup";
-  const source = rawData || input.value;
+  const source = input.value;
   if (source.trim().length === 0) {
     setFeedback("Load data before applying a range.");
     lineRangeActive = false;
@@ -2522,7 +2519,7 @@ clearLineRangeBtn.addEventListener("click", () => {
 });
 
 selectAllLineRangeBtn.addEventListener("click", () => {
-  const source = rawData || input.value;
+  const source = input.value;
   if (source.trim().length === 0) {
     setFeedback("Load data before selecting all range data.");
     return;
@@ -2547,7 +2544,7 @@ selectAllLineRangeBtn.addEventListener("click", () => {
 });
 
 selectYieldLineRangeBtn.addEventListener("click", () => {
-  const source = rawData || input.value;
+  const source = input.value;
   if (source.trim().length === 0) {
     setFeedback("Load data before selecting yield line range data.");
     return;
@@ -2586,7 +2583,7 @@ selectYieldLineRangeBtn.addEventListener("click", () => {
 });
 
 selectUtsLineRangeBtn.addEventListener("click", () => {
-  const source = rawData || input.value;
+  const source = input.value;
   if (source.trim().length === 0) {
     setFeedback("Load data before selecting UTS line range data.");
     return;
@@ -2615,7 +2612,7 @@ selectUtsLineRangeBtn.addEventListener("click", () => {
 });
 
 selectPlasticLineRangeBtn.addEventListener("click", () => {
-  const source = rawData || input.value;
+  const source = input.value;
   if (source.trim().length === 0) {
     setFeedback("Load data before selecting plastic line range data.");
     return;
@@ -2692,8 +2689,7 @@ fileInput.addEventListener("change", (event) => {
     if (referenceInfo) {
       referenceInfo.textContent = "Loads Al2024-T351.csv with its header row (MPa units).";
     }
-    rawData = text.trim();
-    plotFromRaw(rawData);
+    plotFromRaw(text.trim());
   };
   reader.onerror = () => {
     setFeedback("Unable to read the file. Please try again.");
@@ -2759,7 +2755,6 @@ resetBtn.addEventListener("click", () => {
   }
   lastPowerDataset = null;
   powerDatasetDirty = false;
-  rawData = "";
   referenceLoaded = false;
   hardeningWarningMode = "silent";
   regionFitMode = "default";
@@ -2803,7 +2798,7 @@ resetBtn.addEventListener("click", () => {
 });
 
 summaryBtn.addEventListener("click", () => {
-  if (!(rawData || input.value).trim()) {
+  if (!input.value.trim()) {
     setFeedback("Load data to view a summary.");
     return;
   }
@@ -2831,7 +2826,11 @@ if (closeSummaryBtn && summaryPanel) {
 }
 
 function stripDecorations(raw) {
-  return raw.replace(/^\s*(?:>>\s*)?\d+\s*\|\s*/gm, "");
+  if (!raw) {
+    return "";
+  }
+  const stripped = raw.replace(/^\s*(?:>>\s*)?\d+\s*\|\s*/gm, "");
+  return stripped.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 }
 
 function readStressRange() {
@@ -3889,6 +3888,7 @@ function formatLinesWithNumbers(raw, range, lineRange, autoFitRange, rangeAxis) 
     autoFitRange &&
     Number.isFinite(autoFitRange.minX) &&
     Number.isFinite(autoFitRange.maxX);
+  const skipHeader = shouldSkipHeader(raw);
   let lineNumber = 0;
   let headerSkipped = false;
 
@@ -3899,7 +3899,7 @@ function formatLinesWithNumbers(raw, range, lineRange, autoFitRange, rangeAxis) 
       }
 
       let marker = "  ";
-      const isHeader = shouldSkipHeader(raw) && !headerSkipped;
+      const isHeader = skipHeader && !headerSkipped;
       if (isHeader) {
         headerSkipped = true;
         return line;
@@ -3954,7 +3954,7 @@ function inRange(value, range) {
 }
 
 function updateControlsState() {
-  const hasData = (rawData || input.value).trim().length > 0;
+  const hasData = input.value.trim().length > 0;
   const rangeInputsFilled =
     stressMinInput.value.trim().length > 0 || stressMaxInput.value.trim().length > 0;
   const strainRangeInputsFilled =
@@ -4002,13 +4002,14 @@ function getDataLines(raw) {
   const withoutDecorations = stripDecorations(raw);
   const lines = withoutDecorations.split(/\r?\n/);
   const dataLines = [];
+  const skipHeader = shouldSkipHeader(raw);
   let headerSkipped = false;
 
   for (const line of lines) {
     if (line.trim().length === 0) {
       continue;
     }
-    if (shouldSkipHeader(raw) && !headerSkipped) {
+    if (skipHeader && !headerSkipped) {
       headerSkipped = true;
       continue;
     }
@@ -4143,13 +4144,11 @@ function loadReferenceDataset() {
       stressUnitSelect.value = referenceDataset.unit;
       hasHeaderCheckbox.checked = referenceDataset.hasHeader;
       input.value = trimmed;
-      rawData = trimmed;
       if (referenceInfo) {
         referenceInfo.textContent = `Loaded ${referenceDataset.path} (${referenceDataset.unit}).`;
       }
       setFeedback(`Loaded reference dataset: ${referenceDataset.name}.`);
       plotFromRaw(trimmed);
-      updateControlsState();
     })
     .catch((error) => {
       referenceLoaded = false;
@@ -4164,4 +4163,3 @@ function loadReferenceDataset() {
 // Seed with example
 input.value = "0,0, 0.01,120, 0.02,215, 0.03,290, 0.04,310";
 plotFromRaw(input.value);
-updateControlsState();
