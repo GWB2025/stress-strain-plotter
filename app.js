@@ -96,6 +96,7 @@ const hardeningText = document.querySelector("#hardeningText");
 const hardeningPanel = document.querySelector("#hardeningPanel");
 const hardeningChartShell = document.querySelector("#hardeningChartShell");
 const hardeningSummary = document.querySelector("#hardeningSummary");
+const hardeningRegression = document.querySelector("#hardeningRegression");
 const regionFitCubic = document.querySelector("#regionFitCubic");
 const regionFitLine = document.querySelector("#regionFitLine");
 const regionFitSelect = document.querySelector("#regionFitSelect");
@@ -172,7 +173,7 @@ const referenceDataset = {
   hasHeader: true,
 };
 
-const APP_BUILD = "20260121-4";
+const APP_BUILD = "20260121-5";
 
 const diagnostics = createDiagnosticsLogger({
   build: APP_BUILD,
@@ -1272,10 +1273,22 @@ function renderChart(pairs, overridePairs, shouldAutoFill) {
     hardeningChartShell.style.display = "block";
     renderHardeningChart(hardening.logPairs, hardening.fit);
     hardeningSummary.textContent = `Log-log fit: R2 ${hardening.r2.toFixed(4)} | ${hardening.count} pts`;
+    if (hardeningRegression) {
+      const slope = hardening.fit?.slope;
+      const intercept = hardening.fit?.intercept;
+      if (Number.isFinite(slope) && Number.isFinite(intercept)) {
+        hardeningRegression.textContent = `Regression: ln(σ_true) = ${intercept.toFixed(4)} + ${slope.toFixed(4)}·ln(ε_pl)`;
+      } else {
+        hardeningRegression.textContent = "Regression: --";
+      }
+    }
   } else {
     hardeningPanel.style.display = "none";
     hardeningChartShell.style.display = "none";
     hardeningSummary.textContent = "Awaiting plastic range...";
+    if (hardeningRegression) {
+      hardeningRegression.textContent = "Regression: --";
+    }
     hardeningGrid.innerHTML = "";
     hardeningAxes.innerHTML = "";
     hardeningPointsLayer.innerHTML = "";
@@ -1707,8 +1720,8 @@ function renderHardeningChart(logPairs, fit) {
 
   renderGrid(hardeningGrid, xTicks, yTicks, chartBox);
   renderAxes(hardeningAxes, xDomain, yDomain, xTicks, yTicks, chartBox, {
-    x: "ln(ep)",
-    y: "ln(sigma_true)",
+    x: "ln(ε_pl)",
+    y: "ln(σ_true)",
   });
 
   const scaled = renderPoints(logPairs, xDomain, yDomain, chartBox);
@@ -3562,6 +3575,9 @@ resetBtn.addEventListener("click", () => {
   regionFitLine.textContent = "Regression: --";
   regionFitLine.setAttribute("title", "");
   hardeningSummary.textContent = "Awaiting plastic range...";
+  if (hardeningRegression) {
+    hardeningRegression.textContent = "Regression: --";
+  }
   hardeningPanel.style.display = "none";
   hardeningChartShell.style.display = "none";
   plasticSummary.textContent = "Awaiting plastic region data...";

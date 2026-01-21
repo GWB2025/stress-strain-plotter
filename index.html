@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Stress-Strain Plotter</title>
-    <link rel="stylesheet" href="styles.css?v=20260121-4" />
+    <link rel="stylesheet" href="styles.css?v=20260121-5" />
   </head>
   <body>
     <div class="page">
@@ -466,6 +466,7 @@
           <div id="hardeningPanel" class="chart-subhead">
             <h3>Power hardening fit (log-log)</h3>
             <p id="hardeningSummary">Awaiting plastic range...</p>
+            <p id="hardeningRegression">Regression: --</p>
             <p class="file-helper">
               Derived from the loaded engineering curve: <code>ε_true = ln(1+ε_eng)</code>, <code>σ_true = σ_eng·(1+ε_eng)</code>. Estimate
               <code>E</code> from the initial linear (elastic) region, then <code>ε_pl = ε_true − σ_true/E</code>. Fit Hollomon by log-log regression:
@@ -509,6 +510,6 @@
       </main>
     </div>
 
-    <script src="app.js?v=20260121-4"></script>
+    <script src="app.js?v=20260121-5"></script>
   </body>
 </html>
