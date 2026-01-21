@@ -172,7 +172,7 @@ const referenceDataset = {
   hasHeader: true,
 };
 
-const APP_BUILD = "20260121-1";
+const APP_BUILD = "20260121-2";
 
 const diagnostics = createDiagnosticsLogger({
   build: APP_BUILD,
@@ -794,6 +794,25 @@ function analyzeHeaderTokens(line) {
     }
   }
   return { numericCount, hasNonNumeric };
+}
+
+function isAnsysGeneratedDataset(raw) {
+  const lines = stripDecorations(raw).split(/\r?\n/);
+  let first = null;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+    first = trimmed;
+    break;
+  }
+
+  if (!first) {
+    return false;
+  }
+
+  return /^plastic\s+strain\s+for\s+ansys\s+input\b/i.test(first);
 }
 
 function parseNumbers(raw) {
@@ -2553,6 +2572,37 @@ function applyPlotSnapshot(snapshot, reason) {
   }
 }
 
+function restorePreviousPlotSnapshot(reason, message) {
+  if (!previousPlotSnapshot) {
+    if (message) {
+      setFeedback(message);
+    }
+    return false;
+  }
+  const current = capturePlotSnapshot(reason);
+  const snapshot = previousPlotSnapshot;
+  previousPlotSnapshot = current;
+  applyPlotSnapshot(snapshot, reason);
+  if (message) {
+    setFeedback(message);
+  }
+  return true;
+}
+
+function maybeRestorePreviousPlotForSelection(reason) {
+  const currentSource = input ? input.value : "";
+  if (!currentSource || !isAnsysGeneratedDataset(currentSource)) {
+    return false;
+  }
+  if (!previousPlotSnapshot || !previousPlotSnapshot.source) {
+    return false;
+  }
+  if (isAnsysGeneratedDataset(previousPlotSnapshot.source)) {
+    return false;
+  }
+  return restorePreviousPlotSnapshot(reason);
+}
+
 stressUnitSelect.addEventListener("change", () => {
   refreshFromSource();
   if (lastPowerDataset && lastPowerDataset.rows && lastPowerDataset.rows.length > 0) {
@@ -2717,20 +2767,14 @@ plotPowerBtn.addEventListener("click", () => {
   regionFitMode = "default";
   setControlValue(input, content, "plot_generated_dataset");
   plotFromRaw(content);
-  setFeedback("Loaded generated dataset into the plot.");
+  setFeedback(
+    "Loaded generated dataset into the plot. Use Restore previous plot to continue working with the original dataset.",
+  );
 });
 
 if (restorePreviousPlotBtn) {
   restorePreviousPlotBtn.addEventListener("click", () => {
-    if (!previousPlotSnapshot) {
-      setFeedback("No previous plot to restore.");
-      return;
-    }
-    const current = capturePlotSnapshot("restore_previous_plot");
-    const snapshot = previousPlotSnapshot;
-    previousPlotSnapshot = current;
-    applyPlotSnapshot(snapshot, "restore_previous_plot");
-    setFeedback("Restored previous plot.");
+    restorePreviousPlotSnapshot("restore_previous_plot", "Restored previous plot.");
   });
 }
 
@@ -2899,10 +2943,17 @@ selectUtsRangeBtn.addEventListener("click", () => {
 });
 
 selectPlasticRangeBtn.addEventListener("click", () => {
-  const source = input.value;
+  let source = input.value;
   if (source.trim().length === 0) {
     setFeedback("Load data before selecting plastic range data.");
     return;
+  }
+  const wasGeneratedDataset = isAnsysGeneratedDataset(source);
+  const didRestore = wasGeneratedDataset
+    ? maybeRestorePreviousPlotForSelection("auto_restore_for_plastic_stress_range")
+    : false;
+  if (didRestore) {
+    source = input.value;
   }
   const parsed = parseNumbers(source);
   if (parsed.error) {
@@ -2924,7 +2975,13 @@ selectPlasticRangeBtn.addEventListener("click", () => {
     elasticRangeAxis = null;
     regionFitMode = "default";
     hardeningWarningMode = "popup";
-    setFeedback("Unable to determine yield point; range set to full data (plastic fit unavailable).");
+    if (wasGeneratedDataset && !didRestore) {
+      setFeedback(
+        "Generated ANSYS dataset loaded; restore the previous plot to select a plastic region.",
+      );
+    } else {
+      setFeedback("Unable to determine yield point; range set to full data (plastic fit unavailable).");
+    }
     refreshFromSource();
     return;
   }
@@ -2940,7 +2997,11 @@ selectPlasticRangeBtn.addEventListener("click", () => {
   elasticRangeAxis = null;
   regionFitMode = "plastic";
   hardeningWarningMode = "popup";
-  setFeedback("Range inputs overridden to yield through maximum stress.");
+  setFeedback(
+    didRestore
+      ? "Restored previous plot and selected plastic region (yield → maximum stress)."
+      : "Range inputs overridden to yield through maximum stress.",
+  );
   refreshFromSource();
 });
 
@@ -3065,10 +3126,17 @@ selectUtsStrainRangeBtn.addEventListener("click", () => {
 });
 
 selectPlasticStrainRangeBtn.addEventListener("click", () => {
-  const source = input.value;
+  let source = input.value;
   if (source.trim().length === 0) {
     setFeedback("Load data before selecting plastic range data.");
     return;
+  }
+  const wasGeneratedDataset = isAnsysGeneratedDataset(source);
+  const didRestore = wasGeneratedDataset
+    ? maybeRestorePreviousPlotForSelection("auto_restore_for_plastic_strain_range")
+    : false;
+  if (didRestore) {
+    source = input.value;
   }
   const parsed = parseNumbers(source);
   if (parsed.error) {
@@ -3090,7 +3158,13 @@ selectPlasticStrainRangeBtn.addEventListener("click", () => {
     elasticRangeAxis = null;
     regionFitMode = "default";
     hardeningWarningMode = "popup";
-    setFeedback("Unable to determine yield point; range set to full data (plastic fit unavailable).");
+    if (wasGeneratedDataset && !didRestore) {
+      setFeedback(
+        "Generated ANSYS dataset loaded; restore the previous plot to select a plastic region.",
+      );
+    } else {
+      setFeedback("Unable to determine yield point; range set to full data (plastic fit unavailable).");
+    }
     refreshFromSource();
     return;
   }
@@ -3106,7 +3180,11 @@ selectPlasticStrainRangeBtn.addEventListener("click", () => {
   elasticRangeAxis = null;
   regionFitMode = "plastic";
   hardeningWarningMode = "popup";
-  setFeedback("Range inputs overridden to yield through maximum strain.");
+  setFeedback(
+    didRestore
+      ? "Restored previous plot and selected plastic region (yield → maximum strain)."
+      : "Range inputs overridden to yield through maximum strain.",
+  );
   refreshFromSource();
 });
 
@@ -3246,10 +3324,17 @@ selectUtsLineRangeBtn.addEventListener("click", () => {
 });
 
 selectPlasticLineRangeBtn.addEventListener("click", () => {
-  const source = input.value;
+  let source = input.value;
   if (source.trim().length === 0) {
     setFeedback("Load data before selecting plastic line range data.");
     return;
+  }
+  const wasGeneratedDataset = isAnsysGeneratedDataset(source);
+  const didRestore = wasGeneratedDataset
+    ? maybeRestorePreviousPlotForSelection("auto_restore_for_plastic_line_range")
+    : false;
+  if (didRestore) {
+    source = input.value;
   }
   const parsed = parseNumbers(source);
   if (parsed.error) {
@@ -3272,7 +3357,15 @@ selectPlasticLineRangeBtn.addEventListener("click", () => {
     elasticRangeAxis = null;
     regionFitMode = "default";
     hardeningWarningMode = "popup";
-    setFeedback("Unable to determine yield point; line range set to full data (plastic fit unavailable).");
+    if (wasGeneratedDataset && !didRestore) {
+      setFeedback(
+        "Generated ANSYS dataset loaded; restore the previous plot to select a plastic region.",
+      );
+    } else {
+      setFeedback(
+        "Unable to determine yield point; line range set to full data (plastic fit unavailable).",
+      );
+    }
     refreshFromSource();
     return;
   }
@@ -3291,7 +3384,11 @@ selectPlasticLineRangeBtn.addEventListener("click", () => {
   elasticRangeAxis = null;
   regionFitMode = "plastic";
   hardeningWarningMode = "popup";
-  setFeedback("Line range overridden to yield through maximum stress.");
+  setFeedback(
+    didRestore
+      ? "Restored previous plot and selected plastic region (yield → maximum stress)."
+      : "Line range overridden to yield through maximum stress.",
+  );
   refreshFromSource();
 });
 
