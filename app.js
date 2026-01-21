@@ -172,7 +172,7 @@ const referenceDataset = {
   hasHeader: true,
 };
 
-const APP_BUILD = "20260121-3";
+const APP_BUILD = "20260121-4";
 
 const diagnostics = createDiagnosticsLogger({
   build: APP_BUILD,
@@ -466,16 +466,60 @@ function createDiagnosticsLogger({ build, endpoint, controls } = {}) {
     updateStatus();
   }
 
-  function download() {
+  async function download() {
     const content = history.map((entry) => JSON.stringify(entry)).join("\n");
-    const blob = new Blob([`${content}\n`], { type: "application/x-ndjson;charset=utf-8" });
+    const filename = `stress-stain-diagnostics-${sessionId}.jsonl`;
+    const text = `${content}\n`;
+
+    if (typeof window !== "undefined" && typeof window.showSaveFilePicker === "function") {
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: filename,
+          types: [
+            {
+              description: "JSON Lines",
+              accept: {
+                "application/x-ndjson": [".jsonl"],
+                "application/json": [".jsonl", ".ndjson"],
+                "text/plain": [".jsonl", ".ndjson"],
+              },
+            },
+          ],
+        });
+
+        const writable = await handle.createWritable();
+        await writable.write(text);
+        await writable.close();
+
+        push("diagnostics_download_saved", {
+          filename: handle && handle.name ? String(handle.name) : filename,
+          via: "showSaveFilePicker",
+        });
+        updateStatus();
+        return;
+      } catch (error) {
+        const name = error && error.name ? String(error.name) : null;
+        const message = error && error.message ? String(error.message) : String(error);
+        push("diagnostics_download_failed", { name, message, via: "showSaveFilePicker" });
+        updateStatus();
+        if (name === "AbortError") {
+          return;
+        }
+        // Fall through to the default download for unsupported/blocked environments.
+      }
+    }
+
+    const blob = new Blob([text], { type: "application/x-ndjson;charset=utf-8" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = `stress-stain-diagnostics-${sessionId}.jsonl`;
+    link.download = filename;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(link.href);
+
+    push("diagnostics_download_saved", { filename, via: "download_attribute" });
+    updateStatus();
   }
 
   function setEnabled(next) {
@@ -4928,6 +4972,4 @@ function loadReferenceDataset() {
     });
 }
 
-// Seed with example
-input.value = "0,0, 0.01,120, 0.02,215, 0.03,290, 0.04,310";
-plotFromRaw(input.value);
+updateControlsState();
