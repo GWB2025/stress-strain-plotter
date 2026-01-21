@@ -172,7 +172,7 @@ const referenceDataset = {
   hasHeader: true,
 };
 
-const APP_BUILD = "20260121-2";
+const APP_BUILD = "20260121-3";
 
 const diagnostics = createDiagnosticsLogger({
   build: APP_BUILD,
@@ -188,6 +188,12 @@ const diagnostics = createDiagnosticsLogger({
 });
 
 window.stressStainDiagnostics = diagnostics;
+
+if (diagnosticsClearLogBtn) {
+  diagnosticsClearLogBtn.addEventListener("click", () => {
+    setFeedback("Diagnostics log cleared.");
+  });
+}
 
 function hashStringFNV1a32(value) {
   let hash = 2166136261;
