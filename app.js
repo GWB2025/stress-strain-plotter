@@ -172,7 +172,7 @@ const referenceDataset = {
   hasHeader: true,
 };
 
-const APP_BUILD = "20260120-4";
+const APP_BUILD = "20260120-5";
 
 const diagnostics = createDiagnosticsLogger({
   build: APP_BUILD,
@@ -2668,6 +2668,7 @@ plotPowerBtn.addEventListener("click", () => {
     setFeedback("Dataset does not contain valid points.");
     return;
   }
+  lastAutoFillKey = buildAutoFillKey(check.pairs);
 
   previousPlotSnapshot = capturePlotSnapshot("plot_power_dataset");
   stressRangeActive = false;
@@ -2884,9 +2885,9 @@ selectPlasticRangeBtn.addEventListener("click", () => {
     lineRangeActive = false;
     elasticLineOverride = null;
     elasticRangeAxis = null;
-    regionFitMode = "plastic";
+    regionFitMode = "default";
     hardeningWarningMode = "popup";
-    setFeedback("Yield point unavailable; range set to full data.");
+    setFeedback("Unable to determine yield point; range set to full data (plastic fit unavailable).");
     refreshFromSource();
     return;
   }
@@ -3050,9 +3051,9 @@ selectPlasticStrainRangeBtn.addEventListener("click", () => {
     lineRangeActive = false;
     elasticLineOverride = null;
     elasticRangeAxis = null;
-    regionFitMode = "plastic";
+    regionFitMode = "default";
     hardeningWarningMode = "popup";
-    setFeedback("Yield point unavailable; range set to full data.");
+    setFeedback("Unable to determine yield point; range set to full data (plastic fit unavailable).");
     refreshFromSource();
     return;
   }
@@ -3232,9 +3233,9 @@ selectPlasticLineRangeBtn.addEventListener("click", () => {
     strainRangeActive = false;
     elasticRangeOverride = null;
     elasticRangeAxis = null;
-    regionFitMode = "plastic";
+    regionFitMode = "default";
     hardeningWarningMode = "popup";
-    setFeedback("Yield point unavailable; line range set to full data.");
+    setFeedback("Unable to determine yield point; line range set to full data (plastic fit unavailable).");
     refreshFromSource();
     return;
   }
