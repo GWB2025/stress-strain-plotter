@@ -172,7 +172,7 @@ const referenceDataset = {
   hasHeader: true,
 };
 
-const APP_BUILD = "20260120-5";
+const APP_BUILD = "20260121-1";
 
 const diagnostics = createDiagnosticsLogger({
   build: APP_BUILD,
@@ -251,15 +251,16 @@ function setControlValue(control, value, reason) {
   }
   const next = value == null ? "" : String(value);
   const previous = control.value;
-  control.value = next;
-  if (previous !== next) {
-    diagnostics.log("control_set_value", {
-      target: describeLogTarget(control),
-      reason,
-      previous: summarizeInputValue(control, previous, diagnostics.includeDataInput()),
-      next: summarizeInputValue(control, next, diagnostics.includeDataInput()),
-    });
+  if (previous === next) {
+    return;
   }
+  control.value = next;
+  diagnostics.log("control_set_value", {
+    target: describeLogTarget(control),
+    reason,
+    previous: summarizeInputValue(control, previous, diagnostics.includeDataInput()),
+    next: summarizeInputValue(control, next, diagnostics.includeDataInput()),
+  });
 }
 
 function setCheckboxChecked(control, checked, reason) {
@@ -268,15 +269,16 @@ function setCheckboxChecked(control, checked, reason) {
   }
   const next = Boolean(checked);
   const previous = control.checked;
-  control.checked = next;
-  if (previous !== next) {
-    diagnostics.log("control_set_checked", {
-      target: describeLogTarget(control),
-      reason,
-      previous,
-      next,
-    });
+  if (previous === next) {
+    return;
   }
+  control.checked = next;
+  diagnostics.log("control_set_checked", {
+    target: describeLogTarget(control),
+    reason,
+    previous,
+    next,
+  });
 }
 
 function setSelectValue(control, value, reason) {
@@ -289,15 +291,16 @@ function setDisabled(control, disabled, reason) {
   }
   const next = Boolean(disabled);
   const previous = control.disabled;
-  control.disabled = next;
-  if (previous !== next) {
-    diagnostics.log("control_set_disabled", {
-      target: describeLogTarget(control),
-      reason,
-      previous,
-      next,
-    });
+  if (previous === next) {
+    return;
   }
+  control.disabled = next;
+  diagnostics.log("control_set_disabled", {
+    target: describeLogTarget(control),
+    reason,
+    previous,
+    next,
+  });
 }
 
 function createDiagnosticsLogger({ build, endpoint, controls } = {}) {
@@ -605,6 +608,27 @@ function createDiagnosticsLogger({ build, endpoint, controls } = {}) {
           disabled: target.disabled,
           text: target.textContent ? target.textContent.trim().slice(0, 80) : null,
         });
+        return;
+      }
+
+      if (target instanceof HTMLInputElement && (target.type === "checkbox" || target.type === "radio")) {
+        push("click", {
+          target: describeLogTarget(target),
+          disabled: target.disabled,
+          checked: target.checked,
+        });
+        return;
+      }
+
+      if (target instanceof HTMLElement && typeof target.closest === "function") {
+        const label = target.closest("label");
+        if (label instanceof HTMLLabelElement) {
+          push("click", {
+            target: describeLogTarget(label),
+            for: label.htmlFor || null,
+            text: label.textContent ? label.textContent.trim().slice(0, 80) : null,
+          });
+        }
       }
     },
     true,
@@ -654,6 +678,13 @@ function createDiagnosticsLogger({ build, endpoint, controls } = {}) {
   ].filter(Boolean);
 
   if (typeof MutationObserver !== "undefined" && attributeObserverTargets.length > 0) {
+    const lastDisabledStates = new WeakMap();
+    attributeObserverTargets.forEach((target) => {
+      if (target instanceof HTMLElement) {
+        lastDisabledStates.set(target, target.disabled);
+      }
+    });
+
     const observer = new MutationObserver((mutations) => {
       if (!enabled) {
         return;
@@ -666,8 +697,14 @@ function createDiagnosticsLogger({ build, endpoint, controls } = {}) {
         if (!(target instanceof HTMLElement)) {
           continue;
         }
+        const previous = lastDisabledStates.has(target) ? lastDisabledStates.get(target) : null;
+        if (previous === target.disabled) {
+          continue;
+        }
+        lastDisabledStates.set(target, target.disabled);
         push("disabled_changed", {
           target: describeLogTarget(target),
+          previous,
           disabled: target.disabled,
         });
       }
